@@ -4,16 +4,16 @@
 
 ## 当前阶段
 
-项目处于 **V0.0：工程维护基线** 阶段。此阶段只建立可长期维护的协作流程和需求入口，不提前锁定 GUI 框架、图像算法库或文件格式实现。
+项目处于 **V0.1：架构与实施方案** 阶段。已基于当前软件需求形成推荐技术基线、分层架构、超大图方案和三阶段实施计划，尚未开始 GUI 功能编码。
 
 ## 下一步
 
-请先填写 [`docs/requirements/business-and-data-requirements.md`](docs/requirements/business-and-data-requirements.md)。需求确认后，再基于真实业务场景完成：
+请先审阅 [`docs/architecture/v0.1-architecture.md`](docs/architecture/v0.1-architecture.md) 中的待确认问题，然后按 [`docs/plans/v0.1-three-stage-implementation.md`](docs/plans/v0.1-three-stage-implementation.md) 进入 V0.2：
 
-1. 技术选型与分层架构设计；
-2. 最小可用版本（MVP）范围拆分；
-3. RAW 解码、显示、处理和统计的验证原型；
-4. 自动化测试、构建与发布流程。
+1. 建立 C++20、Qt 6 Widgets 和 CMake 工程骨架；
+2. 完成三栏 UI、文件浏览和普通图片打开；
+3. 完成 byte-aligned 8/16/32-bit 平面 RAW 与 LibRaw 相机 RAW 基础解码；
+4. 完成缩放、平移、状态栏和后台任务闭环。
 
 ## 仓库结构
 
@@ -23,9 +23,12 @@
 ├─ docs/
 │  ├─ architecture/         架构原则与后续架构设计
 │  ├─ decisions/            架构决策记录（ADR）
+│  ├─ plans/                分阶段实施方案
 │  ├─ process/              开发和维护流程
+│  ├─ records/              状态、追踪、风险、样本与发布记录
 │  └─ requirements/         业务与数据需求
 ├─ require/                 原始版本需求
+├─ AGENTS.md                自动化代理与开发约束
 ├─ CHANGELOG.md             版本变更记录
 └─ CONTRIBUTING.md          贡献指南
 ```
@@ -34,6 +37,8 @@
 
 - 日常开发遵循 [`docs/process/github-workflow.md`](docs/process/github-workflow.md)。
 - 首次上线 GitHub 前完成 [`docs/process/project-preparation-checklist.md`](docs/process/project-preparation-checklist.md)。
+- 当前状态和待确认项见 [`docs/records/project-status.md`](docs/records/project-status.md)。
+- 所有实现必须更新 [`docs/records/requirements-traceability.md`](docs/records/requirements-traceability.md)。
 - 每个功能或缺陷使用独立分支和 Pull Request。
 - 架构决定记录为 ADR，避免长期维护中丢失决策背景。
 - 版本变化同步维护 `CHANGELOG.md`。

@@ -29,6 +29,7 @@ cmake-build-*/
 CMakeFiles/
 CMakeCache.txt
 compile_commands.json
+CMakeUserPresets.json
 
 # JavaScript
 node_modules/
