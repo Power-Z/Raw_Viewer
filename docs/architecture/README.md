@@ -2,7 +2,12 @@
 
 ## 当前状态
 
-V0.0 尚未完成业务、数据、性能和部署环境确认，因此本目录只记录约束和设计流程，不做具体框架选型。
+V0.1 已形成一份可评审的架构设计：
+
+- [`v0.1-architecture.md`](v0.1-architecture.md)
+- [`../plans/v0.1-three-stage-implementation.md`](../plans/v0.1-three-stage-implementation.md)
+
+当前技术基线为提议状态。首发平台、Qt 许可、32-bit RAW 语义、统计方向和性能设备仍需确认。
 
 ## 已确认约束
 
@@ -29,7 +34,7 @@ V0.0 尚未完成业务、数据、性能和部署环境确认，因此本目录
 
 ## 架构设计前置输入
 
-完成 [`../requirements/business-and-data-requirements.md`](../requirements/business-and-data-requirements.md) 后，架构设计至少输出：
+架构变更至少保持以下输出完整：
 
 - 系统上下文和主要用例；
 - 分层、模块边界和依赖规则；
@@ -38,3 +43,5 @@ V0.0 尚未完成业务、数据、性能和部署环境确认，因此本目录
 - 测试金字塔与基准样本策略；
 - 安全、隐私、日志和故障恢复策略；
 - 关键风险验证原型及 ADR。
+
+稳定的技术决策写入 [`../decisions/`](../decisions/)，当前事实和持续变化记录写入 [`../records/`](../records/)。
