@@ -13,10 +13,10 @@
 | UI-005 | 新版本说明与 About | 架构 6 | P1-02 | Planned |
 | DATA-001 | 拖拽或文件树打开 | 架构 6、10 | P1-03 | Planned |
 | DATA-002 | JPG/BMP/PNG 直接打开 | 架构 5.3、7 | P1-03 | Planned |
-| DATA-003 | RAW/BIN 按 head/w/h/bit/端序打开 | 架构 7.2～7.3 | P1-04 | Planned |
+| DATA-003 | 平面 RAW/BIN 按参数打开；相机 RAW 按内容探测 | 架构 7.2～7.4、ADR-0003 | P1-04/P1-04B | Planned |
 | DATA-004 | 原始/中间/显示三层且原始不变 | 架构 7.1、ADR-0002 | P2-01 | Planned |
 | DATA-005 | 基础 ISP 与五步撤销 | 架构 9、12 | P2-01/P2-02 | Planned |
-| DATA-006 | 200 MP / 400 MB 大图 | 架构 8、ADR-0002 | P3-01～P3-03 | Planned |
+| DATA-006 | 200 MP / 400 MB 大图 | 架构 8、ADR-0002/0003 | P3-01～P3-03 | Planned |
 | VIEW-001 | 无工具时左键拖动、滚轮鼠标锚点缩放 | 架构 10.1 | P1-05 | Planned |
 | VIEW-002 | 多图同步，Alt+左键单独拖动 | 架构 10.2 | P2-06 | Planned |
 | VIEW-003 | 放大后标注 RAW 信号或 RGB | 架构 8.4、10.1 | P2-03 | Planned |

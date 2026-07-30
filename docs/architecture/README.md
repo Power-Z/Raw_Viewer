@@ -7,7 +7,7 @@ V0.1 已形成一份可评审的架构设计：
 - [`v0.1-architecture.md`](v0.1-architecture.md)
 - [`../plans/v0.1-three-stage-implementation.md`](../plans/v0.1-three-stage-implementation.md)
 
-当前技术基线为提议状态。首发平台、Qt 许可、32-bit RAW 语义、统计方向和性能设备仍需确认。
+当前技术基线已接受。已确认 Windows 10/11 x64、Qt 开发期 LGPL 动态链接、UInt32/Float32 和统计方向；相机 RAW 使用内容探测 + 主线 LibRaw，平面 RAW 使用独立参数解码器。正式发布许可复审和 200 MP / 400 MB 样本仍是后续门槛。
 
 ## 已确认约束
 

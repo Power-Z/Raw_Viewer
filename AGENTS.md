@@ -25,7 +25,9 @@ Raw Viewer 是面向 Bayer RAW 图像的桌面浏览、处理和统计工具，�
 - UI：Qt 6 Widgets；
 - 构建：CMake + CMake Presets；
 - 测试：CTest + Qt Test，领域算法可使用独立轻量测试框架但需 ADR；
-- 首发平台：Windows x64（待用户确认）；
+- 首发平台：Windows 10/11 x64（已确认）；
+- 相机 RAW 容器：使用主线 LibRaw 动态库适配，按内容签名识别，不依赖扩展名；
+- 平面 RAW：使用项目自有 `FlatBinaryRawDecoder`，参数由用户显式提供；
 - 图像显示：抽象渲染接口，第一阶段允许 CPU/QPainter，实现超大图阶段切换为瓦片化 GPU 渲染；
 - 并发：应用层可取消任务 + 有界线程池，禁止在 UI 线程做文件解码、全图统计或大块转换。
 
@@ -69,7 +71,9 @@ apps/raw-viewer -> presentation + infrastructure
 - 原始、中间、显示三层数据必须有不同类型，禁止仅靠变量名区分；
 - 大图默认使用瓦片、惰性计算和有界缓存，禁止无评估地生成多份整图副本；
 - 所有尺寸、偏移和字节数计算使用带溢出检查的 64 位整数；
-- RAW 打开前必须验证 `head + rowStride * height <= fileSize`；
+- 平面 RAW 打开前必须验证 `head + rowStride * height <= fileSize`；
+- TIFF/DNG/厂商相机 RAW 不得通过“文件大小减像素字节数”猜测 header，必须由容器解码器读取元数据和数据偏移；
+- 文件类型先检查内容签名，再参考扩展名；`.raw` 不保证是平面字节数组；
 - 字节序、存储位宽、有效位深、标量类型、Bayer pattern 和行步长是独立概念；
 - 统计口径必须明确 ROI 边界、Bayer 通道、空区域、NaN/Inf、饱和与整数溢出行为；
 - 后台任务必须支持取消或世代号失效，过期结果不得更新新文档；
@@ -81,6 +85,7 @@ apps/raw-viewer -> presentation + infrastructure
 - `tests/fixtures/` 只允许小型、人工生成或明确授权的样本；
 - 外部大样本登记在 `docs/records/test-data-manifest.md`，记录 SHA-256、来源、参数和授权；
 - RAW 解码必须覆盖正常、截断、头偏移错误、尺寸溢出、端序和不支持格式；
+- 相机 RAW 集成测试使用 LibRaw 主线构建；生产依赖不得无意包含 GPL demosaic packs；
 - 统计与处理算法使用可独立计算的黄金值，浮点结果写明绝对/相对误差；
 - 性能变更使用固定设备和固定样本记录基准，不能只凭主观流畅度验收。
 

@@ -12,7 +12,7 @@
 
 1. 建立 C++20、Qt 6 Widgets 和 CMake 工程骨架；
 2. 完成三栏 UI、文件浏览和普通图片打开；
-3. 完成 byte-aligned 8/16/32-bit RAW 基础解码；
+3. 完成 byte-aligned 8/16/32-bit 平面 RAW 与 LibRaw 相机 RAW 基础解码；
 4. 完成缩放、平移、状态栏和后台任务闭环。
 
 ## 仓库结构
