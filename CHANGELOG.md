@@ -18,3 +18,9 @@
 - 增加内容探测、LibRaw 相机 RAW 与平面 RAW 双解码架构。
 - 登记 Hasselblad X2D 100C 本地样本及参考测试设备。
 - 将性能基准更新为 Windows 11 / Intel Core Ultra 5 / 16 GiB 显存，并批准 200 MP / 400 MB 样本延期到 V0.4。
+- 建立 C++20、Qt 6.8.3、CMake Presets、CTest 和 Windows CI 工程。
+- 增加领域、应用、基础设施、表现和组装入口五层 target。
+- 增加 JPG/PNG/BMP、byte-aligned 平面 RAW 和 LibRaw 相机 RAW 解码器。
+- 增加三栏主窗口、文件浏览、拖放、五种主题、预览直方图、缩放平移和状态栏像素查询。
+- 增加异步打开、取消标志、generation 保护、结构化错误和本地日志。
+- 增加 RAW 尺寸安全、端序、header、stride、UInt32/Float32 和真实 Hasselblad 样本测试。

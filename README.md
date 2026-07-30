@@ -4,22 +4,64 @@
 
 ## 当前阶段
 
-项目处于 **V0.1：架构与实施方案** 阶段。已基于当前软件需求形成推荐技术基线、分层架构、超大图方案和三阶段实施计划，尚未开始 GUI 功能编码。
+项目处于 **V0.2：工程骨架与基础浏览闭环** 阶段。当前分支已经提供首个可运行的 Windows x64 程序：
 
-## 下一步
+- C++20、Qt 6 Widgets、CMake Presets 和分层 target；
+- 20/60/20 三栏主窗口、文件树、拖放、状态栏和五种主题；
+- JPG、PNG、BMP 基础解码；
+- UInt8、UInt16、UInt32、Float32 平面 RAW，支持端序、header 和 row stride；
+- 主线 LibRaw 0.22.2 相机 RAW 容器解码；
+- 左键平移、鼠标锚点缩放、预览直方图和原始像素查询；
+- 后台打开、取消标志和 generation 防止旧结果覆盖。
 
-请先审阅 [`docs/architecture/v0.1-architecture.md`](docs/architecture/v0.1-architecture.md) 中的待确认问题，然后按 [`docs/plans/v0.1-three-stage-implementation.md`](docs/plans/v0.1-three-stage-implementation.md) 进入 V0.2：
+## Windows 开发环境
 
-1. 建立 C++20、Qt 6 Widgets 和 CMake 工程骨架；
-2. 完成三栏 UI、文件浏览和普通图片打开；
-3. 完成 byte-aligned 8/16/32-bit 平面 RAW 与 LibRaw 相机 RAW 基础解码；
-4. 完成缩放、平移、状态栏和后台任务闭环。
+已验证的依赖基线：
+
+| 依赖 | 版本/变体 |
+|---|---|
+| Visual Studio | 2022，Desktop development with C++ |
+| CMake | 3.21 或更新 |
+| Qt | 6.8.3，`msvc2022_64`，动态链接 |
+| LibRaw | 0.22.2 官方 Win64 动态库，不含 GPL demosaic packs |
+
+设置依赖路径；若依赖位于本机已验证的 `E:\Qt` 和 `E:\LibRaw` 位置，可直接省略：
+
+```powershell
+$env:RAWVIEWER_QT_ROOT = "C:\Qt\6.8.3\msvc2022_64"
+$env:RAWVIEWER_LIBRAW_ROOT = "C:\LibRaw\LibRaw-0.22.2"
+```
+
+配置、构建、测试和运行：
+
+```powershell
+.\scripts\dev.ps1 configure
+.\scripts\dev.ps1 build
+.\scripts\dev.ps1 test
+.\scripts\dev.ps1 run
+```
+
+直接打开文件：
+
+```powershell
+.\scripts\dev.ps1 run -- "D:\images\sample.raw"
+```
+
+验证本地受控相机样本：
+
+```powershell
+$env:RAWVIEWER_CAMERA_SAMPLE = "E:\code\Raw_viewer\Data\Test_data\B0012535.raw"
+.\scripts\dev.ps1 test
+```
+
+`Data/` 中的 RAW 不会进入 Git。平面 `.raw/.bin` 使用左侧参数；TIFF/DNG/厂商相机容器按内容签名进入 LibRaw，不会按扩展名盲目平面解码。
 
 ## 仓库结构
 
 ```text
 .
 ├─ .github/                  GitHub 工作流、Issue 与 PR 模板
+├─ apps/raw-viewer/          程序组装入口
 ├─ docs/
 │  ├─ architecture/         架构原则与后续架构设计
 │  ├─ decisions/            架构决策记录（ADR）
@@ -28,6 +70,13 @@
 │  ├─ records/              状态、追踪、风险、样本与发布记录
 │  └─ requirements/         业务与数据需求
 ├─ require/                 原始版本需求
+├─ scripts/                 本地开发入口
+├─ src/
+│  ├─ domain/               RAW 描述与纯规则
+│  ├─ application/          打开用例与端口
+│  ├─ infrastructure/       Qt/LibRaw 解码和本地日志
+│  └─ presentation/         Qt Widgets 界面
+├─ tests/                   Qt Test / CTest 测试
 ├─ AGENTS.md                自动化代理与开发约束
 ├─ CHANGELOG.md             版本变更记录
 └─ CONTRIBUTING.md          贡献指南
@@ -45,4 +94,4 @@
 
 ## 许可证
 
-尚未选择许可证。在确定项目公开/私有策略和第三方依赖前，不应默认将代码作为开源项目发布。
+仓库当前为私有，项目自身许可证尚未确定。开发期按 Qt LGPL 动态链接方案和 LibRaw LGPL 2.1/CDDL 1.0 双许可依赖方案实施；正式分发前必须再次完成许可证与制品清单复审。
