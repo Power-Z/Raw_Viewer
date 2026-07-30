@@ -1,0 +1,44 @@
+name: Repository quality
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  repository-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check whitespace errors
+        run: git diff --check "${{ github.event.before }}..${{ github.sha }}"
+        if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
+
+      - name: Check pull request whitespace errors
+        run: git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
+        if: github.event_name == 'pull_request'
+
+      - name: Check required maintenance files
+        shell: bash
+        run: |
+          required_files=(
+            README.md
+            CHANGELOG.md
+            CONTRIBUTING.md
+            docs/requirements/business-and-data-requirements.md
+            docs/process/github-workflow.md
+          )
+          for file in "${required_files[@]}"; do
+            test -s "$file" || {
+              echo "::error file=$file::Required file is missing or empty"
+              exit 1
+            }
+          done

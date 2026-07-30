@@ -1,0 +1,48 @@
+# Editors and operating systems
+.idea/
+.vscode/
+*.swp
+*.suo
+*.user
+.DS_Store
+Thumbs.db
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# C/C++ and CMake
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+compile_commands.json
+
+# JavaScript
+node_modules/
+dist/
+coverage/
+
+# Logs and temporary files
+*.log
+*.tmp
+tmp/
+temp/
+
+# RAW test data is intentionally excluded by default.
+# Add only small, redistributable fixtures under tests/fixtures/.
+*.raw
+*.dng
+*.bin
