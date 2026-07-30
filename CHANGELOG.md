@@ -17,3 +17,4 @@
 - 确认 Windows x64、Qt 开发期 LGPL 动态链接、UInt32/Float32 和统计方向。
 - 增加内容探测、LibRaw 相机 RAW 与平面 RAW 双解码架构。
 - 登记 Hasselblad X2D 100C 本地样本及参考测试设备。
+- 将性能基准更新为 Windows 11 / Intel Core Ultra 5 / 16 GiB 显存，并批准 200 MP / 400 MB 样本延期到 V0.4。

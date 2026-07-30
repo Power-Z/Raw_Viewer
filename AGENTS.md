@@ -26,6 +26,7 @@ Raw Viewer 是面向 Bayer RAW 图像的桌面浏览、处理和统计工具，�
 - 构建：CMake + CMake Presets；
 - 测试：CTest + Qt Test，领域算法可使用独立轻量测试框架但需 ADR；
 - 首发平台：Windows 10/11 x64（已确认）；
+- 性能基准设备：Windows 11 x64、Intel Core Ultra 5、16 GiB 显存；GPU 型号、系统内存和磁盘待补；
 - 相机 RAW 容器：使用主线 LibRaw 动态库适配，按内容签名识别，不依赖扩展名；
 - 平面 RAW：使用项目自有 `FlatBinaryRawDecoder`，参数由用户显式提供；
 - 图像显示：抽象渲染接口，第一阶段允许 CPU/QPainter，实现超大图阶段切换为瓦片化 GPU 渲染；
@@ -88,6 +89,7 @@ apps/raw-viewer -> presentation + infrastructure
 - 相机 RAW 集成测试使用 LibRaw 主线构建；生产依赖不得无意包含 GPL demosaic packs；
 - 统计与处理算法使用可独立计算的黄金值，浮点结果写明绝对/相对误差；
 - 性能变更使用固定设备和固定样本记录基准，不能只凭主观流畅度验收。
+- 200 MP / 400 MB 正式样本延期到 V0.4，不阻塞 V0.2；不得因此降低最终容量目标。
 
 当前没有应用代码时，至少运行：
 
