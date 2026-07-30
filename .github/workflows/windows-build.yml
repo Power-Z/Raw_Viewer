@@ -18,7 +18,7 @@ jobs:
       RAWVIEWER_LIBRAW_ROOT: C:\LibRaw\LibRaw-0.22.2
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Qt 6.8.3 base
         shell: pwsh
