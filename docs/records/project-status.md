@@ -1,6 +1,6 @@
 # 项目状态
 
-- 当前版本阶段：V0.1 架构与实施方案
+- 当前版本阶段：V0.2 工程骨架与基础浏览闭环（实施中）
 - 状态日期：2026-07-31
 - 默认分支：`main`
 
@@ -15,17 +15,23 @@
 - 确认 Windows 10/11 x64、Qt 开发期 LGPL 动态链接、UInt32/Float32 和统计方向；
 - 登记并核验 Hasselblad X2D 100C 相机 RAW 样本；
 - 接受相机 RAW 容器与平面 RAW 双解码路径。
+- 安装并验证 Qt 6.8.3 MSVC2022 x64 与主线 LibRaw 0.22.2 动态库；
+- 建立五层 CMake target、CMake Presets、Qt Test/CTest 和 Windows Debug/Release CI；
+- 完成三栏主窗口、文件树/拖放、五种主题、状态栏和预览直方图；
+- 完成普通图片、四类 byte-aligned 平面 RAW 与相机 RAW 基础解码；
+- 完成后台打开、取消标志、generation 保护、平移、缩放和原始像素查询；
+- 合成 RAW 测试及 `CAMERA-HB-X2D-001` 产品 LibRaw 集成测试通过。
 
 ## 当前进行
 
-- 为第一阶段准备合法小型合成 RAW fixture。
-- 选择并集成主线 LibRaw 0.22.x 动态库；
-- 建立已确认基准设备上的 V0.2/V0.4 基准脚本；
-- V0.4 前补充至少 200 MP / 400 MB 的合法性能样本。
+- 完成 V0.2 UI 交互自动化与干净环境 CI 验证；
+- 补齐普通 JPG/PNG/BMP 黄金样本测试；
+- 校准约 100 MP 样本的首次预览和工作集；
+- V0.4 前再准备至少 200 MP / 400 MB 的合法性能样本。
 
 ## 下一里程碑
 
-V0.2：工程骨架与基础浏览闭环。
+V0.2：完成 CI、UI 验收和第一阶段 Pull Request。
 
 出口条件见 `docs/plans/v0.1-three-stage-implementation.md` 第 3.3 节。
 
@@ -65,3 +71,5 @@ V0.2：工程骨架与基础浏览闭环。
 | 2026-07-30 | V0.0 文档与仓库检查 | GitHub Actions `Repository quality` 通过 |
 | 2026-07-30 | V0.1 文档 | 空白字符、UTF-8、相对链接、代码块与 18 项需求追踪检查通过 |
 | 2026-07-31 | `CAMERA-HB-X2D-001` | SHA-256、TIFF 签名、LibRaw 元数据、解码数组与当前设备规格已核验 |
+| 2026-07-31 | V0.2 Debug | MSVC 19.30 + Qt 6.8.3 + LibRaw 0.22.2 编译成功；CTest 2/2 通过 |
+| 2026-07-31 | 产品 LibRaw + `CAMERA-HB-X2D-001` | 11904×8842 UInt16 RGGB、Hasselblad X2D 100C 集成测试通过；8 项测试通过 |

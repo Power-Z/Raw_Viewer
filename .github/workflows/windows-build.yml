@@ -1,0 +1,51 @@
+name: Windows build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Debug, Release]
+    env:
+      RAWVIEWER_QT_ROOT: C:\Qt\6.8.3\msvc2022_64
+      RAWVIEWER_LIBRAW_ROOT: C:\LibRaw\LibRaw-0.22.2
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Qt 6.8.3 base
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check aqtinstall==3.3.0
+          python -m aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 --archives qtbase -O C:\Qt
+
+      - name: Install LibRaw 0.22.2
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://www.libraw.org/data/LibRaw-0.22.2-Win64.zip -OutFile $env:RUNNER_TEMP\libraw.zip
+          $actual = (Get-FileHash $env:RUNNER_TEMP\libraw.zip -Algorithm SHA256).Hash
+          if ($actual -ne "AC64FA12BB00A7581332D4C6AB918C0533FB3F119D6B668D47A6875410DCA948") {
+            throw "Unexpected LibRaw package checksum: $actual"
+          }
+          Expand-Archive $env:RUNNER_TEMP\libraw.zip C:\LibRaw
+          "C:\Qt\6.8.3\msvc2022_64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "C:\LibRaw\LibRaw-0.22.2\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Configure
+        shell: pwsh
+        run: cmake --preset windows-msvc-${{ matrix.configuration == 'Debug' && 'debug' || 'release' }}
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build --preset windows-msvc-${{ matrix.configuration == 'Debug' && 'debug' || 'release' }} -- /m:1
+
+      - name: Test
+        shell: pwsh
+        run: ctest --preset windows-msvc-${{ matrix.configuration == 'Debug' && 'debug' || 'release' }}

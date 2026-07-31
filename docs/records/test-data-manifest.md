@@ -8,22 +8,22 @@
 - 参数或期望结果不完整的样本不能作为验收基准；
 - 删除或替换外部样本时保留历史登记和原因。
 
-## 入库 fixture
+## 合成 fixture
 
 | ID | 路径 | 生成方式 | RAW 参数 | SHA-256 | 预期结果 | 授权 |
 |---|---|---|---|---|---|---|
-| 待创建 | `tests/fixtures/...` | 人工生成 | 待填写 | 待填写 | 待填写 | 项目自有 |
+| SYNTH-U16-LE-001 | 测试运行时临时生成 | C++ 测试生成 | 2×2 UInt16 LE；2-byte header；6-byte stride | 每次运行生成 | 1、2、4660、255 | 项目自有 |
+| SYNTH-U32-BE-001 | 测试运行时临时生成 | C++ 测试生成 | 2×1 UInt32 BE | 每次运行生成 | 16909060、2147483647 | 项目自有 |
+| SYNTH-F32-LE-001 | 测试运行时临时生成 | C++ 测试生成 | 2×1 Float32 LE | 每次运行生成 | 1.0、2.5 | 项目自有 |
+| SYNTH-TRUNC-001 | 测试运行时临时生成 | C++ 测试生成 | 2×2 UInt16，实际 3 bytes | 每次运行生成 | `raw.file_truncated` | 项目自有 |
 
-建议第一阶段至少生成：
+当前测试还应继续补充：
 
-- 4×4 UInt8 RGGB；
-- 4×4 UInt16 little-endian；
-- 4×4 UInt16 big-endian；
-- 带 16-byte header；
-- 带 row padding；
-- UInt32 和 Float32；
-- 截断文件；
-- 会触发尺寸溢出但文件很小的描述参数。
+- 4×4 UInt8 RGGB 的独立黄金文件；
+- 普通 JPG、PNG、BMP 黄金文件；
+- 大端 UInt16；
+- NaN/Inf Float32；
+- UI 拖放与坐标锚点自动化。
 
 ## 外部/大型样本
 
@@ -51,6 +51,7 @@
 - 缩略图：3888×2918；
 - 数组抽查：min=0，max=65535，mean=13032.235；
 - 核验工具：rawpy 0.26.1 / LibRaw 0.22.0；dcraw 9.27 交叉检查。
+- 产品集成复核：Raw Viewer Debug + 官方 LibRaw 0.22.2 Win64，`DecoderTest::verifiesApprovedCameraSampleWhenConfigured` 通过。
 
 若按用户提供的 11776×8842×16-bit 计算，文件大小差为 3,467,264 bytes；若按 LibRaw 报告的 11904×8842×16-bit 计算，差为 1,203,712 bytes。这些差值包含 TIFF IFD、缩略图、元数据及可能的容器布局开销，均不能当作平面 RAW 的 `headerBytes`。
 
