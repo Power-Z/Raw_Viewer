@@ -17,6 +17,7 @@
 - Sensor BLV 与 Display BLV 分离，并提供 Display WLV、Gamma 和图像默认值复位；
 - 每个文档独立的五步参数撤销/重做，显示变化保持当前缩放与平移。
 - Pixel Info 同时查询 Raw、Display、RGB 与 Bayer 通道，并在可读缩放级别绘制有界标签和 Bayer mesh。
+- Bayer Extract 支持 R/Gr/Gb/B 只读通道视图、源 ROI、通道/源坐标互转和带坐标的 CSV 导出。
 
 ## Windows 开发环境
 
@@ -54,7 +55,7 @@ $env:RAWVIEWER_LIBRAW_ROOT = "C:\LibRaw\LibRaw-0.22.2"
 验证本地受控相机样本：
 
 ```powershell
-$env:RAWVIEWER_CAMERA_SAMPLE = "E:\code\Raw_viewer\Data\Test_data\B0012535.raw"
+$env:RAWVIEWER_CAMERA_SAMPLE = "E:\code\Raw_viewer\Data\Test_data\B0012535.B0011072.3FR"
 .\scripts\dev.ps1 test
 ```
 

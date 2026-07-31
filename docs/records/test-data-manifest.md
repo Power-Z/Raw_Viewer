@@ -16,6 +16,8 @@
 | SYNTH-U32-BE-001 | 测试运行时临时生成 | C++ 测试生成 | 2×1 UInt32 BE | 每次运行生成 | 16909060、2147483647 | 项目自有 |
 | SYNTH-F32-LE-001 | 测试运行时临时生成 | C++ 测试生成 | 2×1 Float32 LE | 每次运行生成 | 1.0、2.5 | 项目自有 |
 | SYNTH-TRUNC-001 | 测试运行时临时生成 | C++ 测试生成 | 2×2 UInt16，实际 3 bytes | 每次运行生成 | `raw.file_truncated` | 项目自有 |
+| SYNTH-BAYER-ODD-001 | 测试运行时内存生成 | C++ 测试生成 | 5×5 UInt16 RGGB；奇数尺寸与非对齐 ROI | 每次运行生成 | R/B 尺寸、Gr ROI 起点及源/通道坐标黄金值 | 项目自有 |
+| SYNTH-BAYER-CSV-001 | 测试运行时临时生成 | C++ 测试生成 | 4×2 UInt8 RGGB | 每次运行生成 | Gr 为源坐标 (1,0)=1、(3,0)=3；CSV 精确匹配 | 项目自有 |
 
 当前测试还应继续补充：
 
@@ -29,7 +31,7 @@
 
 | ID | 受控位置标识 | 文件大小 | RAW 参数 | SHA-256 | 来源与授权 | 用途 | 负责人 |
 |---|---|---:|---|---|---|---|---|
-| CAMERA-HB-X2D-001 | `Data/Test_data/B0012535.raw`（本地，不入 Git） | 211,714,048 bytes | TIFF 相机 RAW；11904×8842 UInt16；RGGB | `3708AF7CBA70EC5A3523DBF969943987A2FBCE2C5B17AE80CFF0414D81F16CFF` | 用户允许本项目测试；未确认再分发 | LibRaw 集成、约 100 MP 基准 | Power-Z |
+| CAMERA-HB-X2D-001 | `Data/Test_data/B0012535.B0011072.3FR`（本地，不入 Git） | 211,714,048 bytes | TIFF 相机 RAW；11904×8842 UInt16；RGGB | `3708AF7CBA70EC5A3523DBF969943987A2FBCE2C5B17AE80CFF0414D81F16CFF` | 用户允许本项目测试；未确认再分发 | LibRaw 集成、约 100 MP 基准 | Power-Z |
 | PERF-200MP-001 | 延期准备 | 至少约 400 MB | 至少 200 MP | 待填写 | 待填写 | V0.4 容量与性能验收；不阻塞 V0.2 | 待填写 |
 
 > “受控位置标识”只写存储系统中的非敏感 ID，不记录密码、令牌或可公开访问链接。
@@ -53,6 +55,7 @@
 - 核验工具：rawpy 0.26.1 / LibRaw 0.22.0；dcraw 9.27 交叉检查。
 - 产品集成复核：Raw Viewer Debug + 官方 LibRaw 0.22.2 Win64，`DecoderTest::verifiesApprovedCameraSampleWhenConfigured` 通过；V0.3 额外断言平均 Sensor BLV 4093.5 与 WLV 65535，并完成显示默认值窗口验收。
 - Pixel Info 复核：状态栏返回 Raw 20307、Display 0.5458、RGB 139/139/139、Gr；5223% 缩放下 RGGB 的 R/Gr/Gb/B 英文字标注与 Bayer mesh 正确显示。
+- Bayer Extract 复核：完整 RGGB 源的 R 为 5952×4421、origin (0,0)，B 为 5952×4421、origin (1,1)；状态栏通道坐标到源坐标按 2×2 步长映射，恢复原图后尺寸与 RGGB 元数据正确。
 
 若按用户提供的 11776×8842×16-bit 计算，文件大小差为 3,467,264 bytes；若按 LibRaw 报告的 11904×8842×16-bit 计算，差为 1,203,712 bytes。这些差值包含 TIFF IFD、缩略图、元数据及可能的容器布局开销，均不能当作平面 RAW 的 `headerBytes`。
 

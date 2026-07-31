@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace rawviewer::domain {
@@ -31,6 +32,13 @@ enum class BayerChannel {
     Gr,
     Gb,
     B
+};
+
+struct BayerCoordinate {
+    std::uint64_t x = 0;
+    std::uint64_t y = 0;
+
+    bool operator==(const BayerCoordinate&) const = default;
 };
 
 struct RawDescriptor {
@@ -64,5 +72,18 @@ const char* toString(BayerChannel value) noexcept;
 BayerChannel bayerChannelAt(BayerPattern pattern,
                             std::uint64_t x,
                             std::uint64_t y) noexcept;
+std::optional<BayerCoordinate> bayerChannelOffset(
+    BayerPattern pattern,
+    BayerChannel channel) noexcept;
+std::optional<BayerCoordinate> bayerChannelToSource(
+    BayerPattern pattern,
+    BayerChannel channel,
+    std::uint64_t channelX,
+    std::uint64_t channelY) noexcept;
+std::optional<BayerCoordinate> sourceToBayerChannel(
+    BayerPattern pattern,
+    BayerChannel channel,
+    std::uint64_t sourceX,
+    std::uint64_t sourceY) noexcept;
 
 } // namespace rawviewer::domain

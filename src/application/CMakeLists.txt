@@ -1,4 +1,5 @@
 add_library(rawviewer_application STATIC
+    bayer_extract.cpp
     document_session.cpp
     open_image_service.cpp
     pixel_info.cpp

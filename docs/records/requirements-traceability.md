@@ -22,7 +22,7 @@
 | VIEW-003 | 放大后标注 RAW 信号或 RGB | 架构 8.4、10.1；`ImageViewport::drawPixelOverlay`；Pixel Info/decoder tests | P2-03 | Verified |
 | TOOL-001 | Pixel Info 信号、mesh、pattern 标注 | 架构 10.3、12；`queryPixelInfo` + `PixelInfoDialog`；四 pattern 测试与 `CAMERA-HB-X2D-001` UI 验收 | P2-03 | Verified |
 | TOOL-002 | Pixel Statistics 四种模式 | 架构 11 | P2-05/P3-04 | Planned |
-| TOOL-003 | Bayer pattern 特定像素提取 | 架构 12 | P2-04 | Planned |
+| TOOL-003 | Bayer pattern 特定像素提取 | 架构 12；`BayerExtractService` + `BayerExtractDialog` + `BayerCsvExporter`；odd-size/ROI/CSV tests 与 `CAMERA-HB-X2D-001` UI 验收 | P2-04 | Verified |
 | TOOL-004 | 预留复杂 ISP 工具 | 架构 12 | P2-01，持续 | Planned |
 
 ## 追踪规则

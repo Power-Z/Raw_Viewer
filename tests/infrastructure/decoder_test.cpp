@@ -1,7 +1,9 @@
+#include "infrastructure/bayer_csv_exporter.h"
 #include "infrastructure/camera_raw_decoder.h"
 #include "infrastructure/flat_raw_decoder.h"
 #include "infrastructure/qt_image_decoder.h"
 
+#include "application/bayer_extract.h"
 #include "application/pixel_info.h"
 
 #include <QFile>
@@ -46,6 +48,7 @@ private slots:
     void refusesTruncatedFile();
     void cameraContainerWinsBySignature();
     void preservesStandardImageRgbForPixelInfo();
+    void exportsExtractedBayerChannelAsCsv();
     void verifiesApprovedCameraSampleWhenConfigured();
 };
 
@@ -204,6 +207,50 @@ void DecoderTest::preservesStandardImageRgbForPixelInfo() {
     QCOMPARE(info.red, std::uint8_t{10});
     QCOMPARE(info.green, std::uint8_t{20});
     QCOMPARE(info.blue, std::uint8_t{30});
+}
+
+void DecoderTest::exportsExtractedBayerChannelAsCsv() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString sourcePath = directory.filePath("source.raw");
+    QFile sourceFile(sourcePath);
+    QVERIFY(sourceFile.open(QIODevice::WriteOnly));
+    const QByteArray bytes = QByteArray::fromRawData("\0\1\2\3\4\5\6\7", 8);
+    QCOMPARE(sourceFile.write(bytes), bytes.size());
+    sourceFile.close();
+
+    rawviewer::domain::RawDescriptor descriptor;
+    descriptor.width = 4;
+    descriptor.height = 2;
+    descriptor.scalarType = rawviewer::domain::ScalarType::UInt8;
+    descriptor.bayerPattern = rawviewer::domain::BayerPattern::RGGB;
+    rawviewer::infrastructure::FlatRawDecoder decoder;
+    const auto decoded = decoder.decode(makeRequest(sourcePath, descriptor));
+    QVERIFY2(decoded.succeeded(), decoded.message.c_str());
+
+    rawviewer::application::BayerExtractRequest extractRequest;
+    extractRequest.source = decoded.image;
+    extractRequest.channel = rawviewer::domain::BayerChannel::Gr;
+    const auto extracted =
+        rawviewer::application::BayerExtractService().execute(extractRequest);
+    QVERIFY2(extracted.succeeded(), extracted.message.c_str());
+
+    const QString csvPath = directory.filePath("gr.csv");
+    rawviewer::application::BayerExportRequest exportRequest;
+    exportRequest.extraction = extracted.extraction;
+    exportRequest.path = nativePath(csvPath);
+    exportRequest.cancellation = std::make_shared<std::atomic_bool>(false);
+    rawviewer::infrastructure::BayerCsvExporter exporter;
+    const auto exported = exporter.exportCsv(exportRequest);
+    QVERIFY2(exported.succeeded, exported.message.c_str());
+    QCOMPARE(exported.exportedSamples, std::uint64_t{2});
+
+    QFile csv(csvPath);
+    QVERIFY(csv.open(QIODevice::ReadOnly | QIODevice::Text));
+    QCOMPARE(csv.readAll(),
+             QByteArray("channel_x,channel_y,source_x,source_y,value\n"
+                        "0,0,1,0,1\n"
+                        "1,0,3,0,3\n"));
 }
 
 void DecoderTest::verifiesApprovedCameraSampleWhenConfigured() {

@@ -1,5 +1,6 @@
 #include "presentation/main_window.h"
 
+#include "presentation/bayer_extract_dialog.h"
 #include "presentation/histogram_widget.h"
 #include "presentation/image_viewport.h"
 #include "presentation/pixel_info_dialog.h"
@@ -53,12 +54,15 @@ QString metadataSummary(const application::ImageMetadata& metadata) {
 
 MainWindow::MainWindow(
     std::shared_ptr<const application::OpenImageService> openService,
+    std::shared_ptr<const application::IBayerPlaneExporter> bayerExporter,
     QWidget* parent)
     : QMainWindow(parent),
-      openService_(std::move(openService)) {
+      openService_(std::move(openService)),
+      bayerExporter_(std::move(bayerExporter)) {
     setWindowTitle(tr("Raw Viewer"));
     resize(1440, 900);
     pixelInfoDialog_ = new PixelInfoDialog(this);
+    bayerExtractDialog_ = new BayerExtractDialog(this);
     createMenus();
     createStatusBar();
 
@@ -84,6 +88,18 @@ MainWindow::MainWindow(
             &PixelInfoDialog::optionsChanged,
             viewport_,
             &ImageViewport::setPixelOverlayOptions);
+    connect(bayerExtractDialog_,
+            &BayerExtractDialog::extractRequested,
+            this,
+            &MainWindow::beginBayerExtraction);
+    connect(bayerExtractDialog_,
+            &BayerExtractDialog::showOriginalRequested,
+            this,
+            &MainWindow::showOriginalImage);
+    connect(bayerExtractDialog_,
+            &BayerExtractDialog::exportRequested,
+            this,
+            &MainWindow::exportBayerCsv);
     coordinateTimer_ = new QTimer(this);
     coordinateTimer_->setSingleShot(true);
     coordinateTimer_->setInterval(16);
@@ -103,6 +119,12 @@ MainWindow::MainWindow(
 MainWindow::~MainWindow() {
     if (cancellation_) {
         cancellation_->store(true);
+    }
+    if (bayerCancellation_) {
+        bayerCancellation_->store(true);
+    }
+    if (exportCancellation_) {
+        exportCancellation_->store(true);
     }
 }
 
@@ -168,8 +190,10 @@ void MainWindow::createMenus() {
             this, &MainWindow::openPixelInfo);
     auto* statisticsAction = toolMenu->addAction(tr("Pixel Statistics（V0.3）"));
     statisticsAction->setEnabled(false);
-    auto* extractAction = toolMenu->addAction(tr("Bayer Extract（V0.3）"));
-    extractAction->setEnabled(false);
+    bayerExtractAction_ = toolMenu->addAction(tr("Bayer Extract"));
+    bayerExtractAction_->setEnabled(false);
+    connect(bayerExtractAction_, &QAction::triggered,
+            this, &MainWindow::openBayerExtract);
 
     auto* helpMenu = menuBar()->addMenu(tr("帮助(&H)"));
     helpMenu->addAction(tr("关于 Raw Viewer"), this, [this] {
@@ -177,7 +201,7 @@ void MainWindow::createMenus() {
             this,
             tr("关于 Raw Viewer"),
             tr("<b>Raw Viewer 0.3.0-dev</b><br>"
-               "第二阶段：非破坏显示处理、五步撤销与 Pixel Info。<br>"
+               "第二阶段：非破坏显示处理、Pixel Info 与 Bayer Extract。<br>"
                "输入文件和原始像素始终保持只读。"));
     });
 }
@@ -374,9 +398,13 @@ QWidget* MainWindow::createRightPanel() {
     connect(pixelInfoButton_, &QPushButton::clicked,
             this, &MainWindow::openPixelInfo);
     toolLayout->addWidget(pixelInfoButton_);
+    bayerExtractButton_ = new QPushButton(tr("Bayer Extract"), tools);
+    bayerExtractButton_->setEnabled(false);
+    connect(bayerExtractButton_, &QPushButton::clicked,
+            this, &MainWindow::openBayerExtract);
+    toolLayout->addWidget(bayerExtractButton_);
     for (const QString& name : {
              "Pixel Statistics — V0.3",
-             "Bayer Extract — V0.3",
              "ISP tools — reserved"}) {
         auto* button = new QPushButton(name, tools);
         button->setEnabled(false);
@@ -431,6 +459,15 @@ void MainWindow::beginOpen(const QString& path) {
     if (cancellation_) {
         cancellation_->store(true);
     }
+    if (bayerCancellation_) {
+        bayerCancellation_->store(true);
+        bayerCancellation_.reset();
+    }
+    if (exportCancellation_) {
+        exportCancellation_->store(true);
+        exportCancellation_.reset();
+    }
+    ++bayerGeneration_;
     cancellation_ = std::make_shared<std::atomic_bool>(false);
     const auto token = cancellation_;
     const auto generation = ++generation_;
@@ -477,11 +514,22 @@ void MainWindow::showDecoded(
     std::shared_ptr<const application::DecodedImage> image) {
     documentSession_ =
         std::make_unique<application::DocumentSession>(std::move(image));
+    bayerExtraction_.reset();
+    displaySource_ = documentSession_->original();
+    bayerExtractDialog_->setResult(nullptr);
+    bayerExtractDialog_->setSource(&displaySource_->metadata);
+    pendingCoordinateInside_ = false;
+    coordinateLabel_->setText(tr("坐标 —"));
     syncDisplayControls();
     renderCurrentDisplay(false);
     updateUndoActions();
     pixelInfoAction_->setEnabled(true);
     pixelInfoButton_->setEnabled(true);
+    const bool supportsBayer =
+        displaySource_->metadata.kind != application::ImageKind::Standard &&
+        displaySource_->metadata.bayerPattern != domain::BayerPattern::None;
+    bayerExtractAction_->setEnabled(supportsBayer);
+    bayerExtractButton_->setEnabled(supportsBayer);
     imageLabel_->setText(metadataSummary(currentImage_->metadata));
     setWindowTitle(QStringLiteral("%1 — Raw Viewer")
                        .arg(QString::fromStdString(currentImage_->metadata.camera)
@@ -541,8 +589,11 @@ void MainWindow::renderCurrentDisplay(bool preserveView) {
     if (!documentSession_) {
         return;
     }
+    const auto source = displaySource_
+        ? displaySource_
+        : documentSession_->original();
     currentImage_ = application::PreviewRenderer::render(
-        documentSession_->original(),
+        source,
         documentSession_->displayMapping());
     if (!currentImage_) {
         return;
@@ -550,6 +601,7 @@ void MainWindow::renderCurrentDisplay(bool preserveView) {
     viewport_->setDisplayMapping(documentSession_->displayMapping());
     viewport_->setImage(currentImage_, preserveView);
     histogram_->setImage(currentImage_);
+    imageLabel_->setText(metadataSummary(source->metadata));
 }
 
 void MainWindow::updateUndoActions() {
@@ -579,12 +631,12 @@ void MainWindow::updateCoordinate(qint64 x, qint64 y, bool inside) {
 
 void MainWindow::flushCoordinateUpdate() {
     if (!pendingCoordinateInside_ || !documentSession_ ||
-        !documentSession_->original()->pixels) {
+        !displaySource_ || !displaySource_->pixels) {
         coordinateLabel_->setText(tr("坐标 —"));
         return;
     }
     const auto info = application::queryPixelInfo(
-        *documentSession_->original(),
+        *displaySource_,
         documentSession_->displayMapping(),
         static_cast<std::uint64_t>(pendingCoordinateX_),
         static_cast<std::uint64_t>(pendingCoordinateY_));
@@ -594,6 +646,25 @@ void MainWindow::flushCoordinateUpdate() {
                 .arg(pendingCoordinateX_)
                 .arg(pendingCoordinateY_));
         return;
+    }
+    if (bayerExtraction_ &&
+        displaySource_.get() == bayerExtraction_->image.get()) {
+        const auto source = bayerExtraction_->geometry.sourceCoordinate(
+            static_cast<std::uint64_t>(pendingCoordinateX_),
+            static_cast<std::uint64_t>(pendingCoordinateY_));
+        if (source) {
+            coordinateLabel_->setText(
+                tr("通道 %1 (%2, %3) → Source (%4, %5) | Raw %6 | Display %7")
+                    .arg(QString::fromLatin1(domain::toString(
+                        bayerExtraction_->geometry.channel)))
+                    .arg(pendingCoordinateX_)
+                    .arg(pendingCoordinateY_)
+                    .arg(source->x)
+                    .arg(source->y)
+                    .arg(info.originalValue, 0, 'g', 10)
+                    .arg(info.processedValue, 0, 'f', 4));
+            return;
+        }
     }
     QString channel;
     if (info.channel != domain::BayerChannel::None) {
@@ -620,6 +691,152 @@ void MainWindow::openPixelInfo() {
     pixelInfoDialog_->show();
     pixelInfoDialog_->raise();
     pixelInfoDialog_->activateWindow();
+}
+
+void MainWindow::openBayerExtract() {
+    if (!documentSession_ ||
+        documentSession_->original()->metadata.bayerPattern ==
+            domain::BayerPattern::None) {
+        return;
+    }
+    bayerExtractDialog_->show();
+    bayerExtractDialog_->raise();
+    bayerExtractDialog_->activateWindow();
+}
+
+void MainWindow::beginBayerExtraction() {
+    if (!documentSession_) {
+        return;
+    }
+    if (bayerCancellation_) {
+        bayerCancellation_->store(true);
+    }
+    if (exportCancellation_) {
+        exportCancellation_->store(true);
+        exportCancellation_.reset();
+    }
+    bayerCancellation_ = std::make_shared<std::atomic_bool>(false);
+    const auto token = bayerCancellation_;
+    const auto generation = ++bayerGeneration_;
+    const auto request = bayerExtractDialog_->request(
+        documentSession_->original(), token);
+    bayerExtractDialog_->setBusy(true, tr("正在生成单通道预览…"));
+    taskLabel_->setText(tr("正在提取 Bayer 通道…"));
+
+    auto* watcher =
+        new QFutureWatcher<application::BayerExtractResult>(this);
+    connect(watcher,
+            &QFutureWatcher<application::BayerExtractResult>::finished,
+            this,
+            [this, watcher, generation, token] {
+        const auto result = watcher->result();
+        watcher->deleteLater();
+        if (generation != bayerGeneration_ || token != bayerCancellation_) {
+            return;
+        }
+        bayerExtractDialog_->setBusy(false);
+        if (!result.succeeded()) {
+            taskLabel_->setText(tr("Bayer 提取失败"));
+            bayerExtractDialog_->setResult(nullptr);
+            if (result.errorCode != "task.cancelled") {
+                QMessageBox::warning(
+                    this,
+                    tr("Bayer Extract"),
+                    QString::fromStdString(result.message));
+            }
+            return;
+        }
+        bayerExtraction_ = result.extraction;
+        displaySource_ = bayerExtraction_->image;
+        pendingCoordinateInside_ = false;
+        coordinateLabel_->setText(tr("坐标 —"));
+        bayerExtractDialog_->setResult(bayerExtraction_.get());
+        renderCurrentDisplay(false);
+        taskLabel_->setText(
+            tr("已显示 %1 通道")
+                .arg(QString::fromLatin1(domain::toString(
+                    bayerExtraction_->geometry.channel))));
+    });
+    const auto service = bayerExtractService_;
+    watcher->setFuture(QtConcurrent::run([service, request] {
+        return service.execute(request);
+    }));
+}
+
+void MainWindow::showOriginalImage() {
+    if (!documentSession_) {
+        return;
+    }
+    displaySource_ = documentSession_->original();
+    pendingCoordinateInside_ = false;
+    coordinateLabel_->setText(tr("坐标 —"));
+    renderCurrentDisplay(false);
+    taskLabel_->setText(tr("已显示原始 Bayer 图像"));
+}
+
+void MainWindow::exportBayerCsv() {
+    if (!bayerExtraction_ || !bayerExporter_) {
+        return;
+    }
+    const QString suggested = QStringLiteral("bayer_%1.csv").arg(
+        QString::fromLatin1(domain::toString(
+            bayerExtraction_->geometry.channel)));
+    const QString path = QFileDialog::getSaveFileName(
+        this,
+        tr("导出 Bayer 通道 CSV"),
+        QDir(pathEdit_->text()).filePath(suggested),
+        tr("CSV 文件 (*.csv)"));
+    if (path.isEmpty()) {
+        return;
+    }
+    if (exportCancellation_) {
+        exportCancellation_->store(true);
+    }
+    exportCancellation_ = std::make_shared<std::atomic_bool>(false);
+    const auto token = exportCancellation_;
+    application::BayerExportRequest request;
+    request.extraction = bayerExtraction_;
+    request.path = std::filesystem::path(path.toStdWString());
+    request.cancellation = token;
+    bayerExtractDialog_->setBusy(true, tr("正在导出 CSV…"));
+    taskLabel_->setText(tr("正在导出 Bayer CSV…"));
+
+    auto* watcher =
+        new QFutureWatcher<application::BayerExportResult>(this);
+    connect(watcher,
+            &QFutureWatcher<application::BayerExportResult>::finished,
+            this,
+            [this, watcher, token, path] {
+        const auto result = watcher->result();
+        watcher->deleteLater();
+        if (token != exportCancellation_) {
+            return;
+        }
+        bayerExtractDialog_->setBusy(false);
+        bayerExtractDialog_->setResult(bayerExtraction_.get());
+        if (!result.succeeded) {
+            taskLabel_->setText(tr("Bayer CSV 导出失败"));
+            if (result.errorCode != "task.cancelled") {
+                QMessageBox::critical(
+                    this,
+                    tr("导出失败"),
+                    QString::fromStdString(result.message));
+            }
+            return;
+        }
+        taskLabel_->setText(
+            tr("已导出 %1 个样本").arg(result.exportedSamples));
+        QMessageBox::information(
+            this,
+            tr("导出完成"),
+            tr("已导出 %1 个样本到：\n%2")
+                .arg(result.exportedSamples)
+                .arg(QDir::toNativeSeparators(path)));
+    });
+    const auto exporter = bayerExporter_;
+    watcher->setFuture(QtConcurrent::run([exporter, request] {
+        return exporter->exportCsv(request);
+    }));
 }
 
 } // namespace rawviewer::presentation

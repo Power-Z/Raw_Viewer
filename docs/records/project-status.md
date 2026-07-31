@@ -1,7 +1,7 @@
 # 项目状态
 
-- 当前版本阶段：V0.3 非破坏处理与基础分析（第一批实施中）
-- 状态日期：2026-07-31
+- 当前版本阶段：V0.3 非破坏处理与基础分析（实施中）
+- 状态日期：2026-08-01
 - 默认分支：`main`
 
 ## 已完成
@@ -27,10 +27,12 @@
 - 完成每文档独立、最多五个逻辑操作的参数撤销/重做。
 - 完成 P2-03 Pixel Info：Raw/Display/RGB 查询、四种 Bayer pattern、mesh、缩放阈值与标签上限；
 - 状态栏像素查询和显示预览更新均限制为约 60 Hz。
+- 完成 P2-04 Bayer Extract：R/Gr/Gb/B、源 ROI、坐标互转、单通道显示和 CSV 导出接口；
+- 单通道使用只读 2×2 像素源视图，不复制四分之一幅完整通道数据。
 
 ## 当前进行
 
-- 实施 P2-04 Bayer Extract、P2-05 ROI Statistics 和 P2-06 双图对比；
+- 实施 P2-05 ROI Statistics 和 P2-06 双图对比；
 - 为后续瓦片缓存接入完整 revision 键；
 - 补齐普通 JPG/PNG/BMP 黄金样本和更多 UI 自动化测试；
 - V0.4 前再准备至少 200 MP / 400 MB 的合法性能样本。
@@ -81,3 +83,4 @@ V0.3：完成像素信息、Bayer 提取、ROI 基础统计与双图对比闭环
 | 2026-07-31 | 产品 LibRaw + `CAMERA-HB-X2D-001` | 11904×8842 UInt16 RGGB、Hasselblad X2D 100C 集成测试通过；8 项测试通过 |
 | 2026-07-31 | V0.3 第一批 Debug/Release + UI | 两种配置 CTest 均 3/3 通过；BLV/WLV/Gamma、真实样本默认值、撤销与重做窗口验收通过 |
 | 2026-07-31 | V0.3 Pixel Info Debug/Release + UI | 四种 Bayer pattern 与 RGB 黄金测试通过；真实样本 Raw/Display/RGB 状态栏及 5223% mesh/标签窗口验收通过 |
+| 2026-08-01 | V0.3 Bayer Extract Debug/Release + UI | 两种配置 CTest 均 3/3；奇数尺寸、ROI、坐标和 CSV 黄金测试通过；11904×8842 RGGB 实图 R/B 通道尺寸、起点、源坐标与原图恢复验收通过 |

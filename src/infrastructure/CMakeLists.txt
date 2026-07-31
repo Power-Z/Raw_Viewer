@@ -30,6 +30,7 @@ set_target_properties(rawviewer_libraw PROPERTIES
 )
 
 add_library(rawviewer_infrastructure STATIC
+    bayer_csv_exporter.cpp
     camera_raw_decoder.cpp
     flat_raw_decoder.cpp
     local_logger.cpp

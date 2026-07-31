@@ -1,3 +1,4 @@
+#include "application/bayer_extract.h"
 #include "application/document_session.h"
 #include "application/pixel_info.h"
 #include "application/preview_renderer.h"
@@ -21,6 +22,28 @@ public:
         }
         return {true, static_cast<double>(x * 50)};
     }
+};
+
+class GridPixelSource final : public rawviewer::application::IPixelSource {
+public:
+    GridPixelSource(std::uint64_t width, std::uint64_t height)
+        : width_(width), height_(height) {}
+
+    std::uint64_t width() const noexcept override { return width_; }
+    std::uint64_t height() const noexcept override { return height_; }
+
+    rawviewer::application::PixelSample sample(
+        std::uint64_t x,
+        std::uint64_t y) const noexcept override {
+        if (x >= width_ || y >= height_) {
+            return {};
+        }
+        return {true, static_cast<double>(y * 10 + x)};
+    }
+
+private:
+    std::uint64_t width_ = 0;
+    std::uint64_t height_ = 0;
 };
 
 std::shared_ptr<rawviewer::application::DecodedImage> makeImage() {
@@ -48,6 +71,24 @@ std::shared_ptr<rawviewer::application::DecodedImage> makeImage() {
     return image;
 }
 
+std::shared_ptr<rawviewer::application::DecodedImage> makeBayerImage(
+    std::uint64_t width,
+    std::uint64_t height,
+    rawviewer::domain::BayerPattern pattern =
+        rawviewer::domain::BayerPattern::RGGB) {
+    auto image = std::make_shared<rawviewer::application::DecodedImage>();
+    image->metadata.width = width;
+    image->metadata.height = height;
+    image->metadata.scalarType = rawviewer::domain::ScalarType::UInt16;
+    image->metadata.kind = rawviewer::application::ImageKind::FlatRaw;
+    image->metadata.bayerPattern = pattern;
+    image->metadata.sensorBlackLevel = 0.0;
+    image->metadata.whiteLevel = 65535.0;
+    image->metadata.format = "Synthetic RAW";
+    image->pixels = std::make_shared<GridPixelSource>(width, height);
+    return image;
+}
+
 void commitBlackPoint(rawviewer::application::DocumentSession& session,
                       double blackPoint) {
     auto mapping = session.displayMapping();
@@ -69,6 +110,10 @@ private slots:
     void rendersWithoutChangingOriginal();
     void queriesOriginalProcessedRgbAndBayerValues();
     void rejectsOutOfBoundsPixelInfo();
+    void extractsChannelsFromOddSizedImage();
+    void extractsUnalignedRoiAndConvertsCoordinates();
+    void rejectsInvalidAndEmptyBayerRegions();
+    void cancelsBayerExtraction();
 };
 
 void DocumentSessionTest::keepsOnlyFiveUndoOperations() {
@@ -148,6 +193,82 @@ void DocumentSessionTest::rejectsOutOfBoundsPixelInfo() {
     const auto info = rawviewer::application::queryPixelInfo(
         *image, {}, 3, 0);
     QVERIFY(!info.valid);
+}
+
+void DocumentSessionTest::extractsChannelsFromOddSizedImage() {
+    rawviewer::application::BayerExtractService service;
+    rawviewer::application::BayerExtractRequest request;
+    request.source = makeBayerImage(5, 3);
+    request.channel = rawviewer::domain::BayerChannel::R;
+    const auto red = service.execute(request);
+    QVERIFY2(red.succeeded(), red.message.c_str());
+    QCOMPARE(red.extraction->geometry.width, std::uint64_t{3});
+    QCOMPARE(red.extraction->geometry.height, std::uint64_t{2});
+    QCOMPARE(red.extraction->geometry.sourceOriginX, std::uint64_t{0});
+    QCOMPARE(red.extraction->geometry.sourceOriginY, std::uint64_t{0});
+    QCOMPARE(red.extraction->image->pixels->sample(2, 1).value, 24.0);
+    QCOMPARE(request.source->pixels->sample(4, 2).value, 24.0);
+
+    request.channel = rawviewer::domain::BayerChannel::B;
+    const auto blue = service.execute(request);
+    QVERIFY2(blue.succeeded(), blue.message.c_str());
+    QCOMPARE(blue.extraction->geometry.width, std::uint64_t{2});
+    QCOMPARE(blue.extraction->geometry.height, std::uint64_t{1});
+    QCOMPARE(blue.extraction->image->pixels->sample(1, 0).value, 13.0);
+}
+
+void DocumentSessionTest::extractsUnalignedRoiAndConvertsCoordinates() {
+    rawviewer::application::BayerExtractRequest request;
+    request.source = makeBayerImage(5, 5);
+    request.channel = rawviewer::domain::BayerChannel::Gr;
+    request.sourceRegion = rawviewer::application::PixelRegion{1, 1, 4, 4};
+    const auto result =
+        rawviewer::application::BayerExtractService().execute(request);
+    QVERIFY2(result.succeeded(), result.message.c_str());
+    const auto& geometry = result.extraction->geometry;
+    QCOMPARE(geometry.width, std::uint64_t{2});
+    QCOMPARE(geometry.height, std::uint64_t{2});
+    QCOMPARE(geometry.sourceOriginX, std::uint64_t{1});
+    QCOMPARE(geometry.sourceOriginY, std::uint64_t{2});
+    const std::optional<rawviewer::domain::BayerCoordinate> source34 =
+        rawviewer::domain::BayerCoordinate{3, 4};
+    const std::optional<rawviewer::domain::BayerCoordinate> channel11 =
+        rawviewer::domain::BayerCoordinate{1, 1};
+    QCOMPARE(geometry.sourceCoordinate(1, 1), source34);
+    QCOMPARE(geometry.channelCoordinate(3, 4), channel11);
+    QVERIFY(!geometry.channelCoordinate(2, 4));
+    QVERIFY(!geometry.sourceCoordinate(2, 1));
+    QCOMPARE(result.extraction->image->pixels->sample(1, 1).value, 43.0);
+}
+
+void DocumentSessionTest::rejectsInvalidAndEmptyBayerRegions() {
+    rawviewer::application::BayerExtractRequest request;
+    request.source = makeBayerImage(5, 5);
+    request.channel = rawviewer::domain::BayerChannel::R;
+    request.sourceRegion = rawviewer::application::PixelRegion{4, 4, 2, 1};
+    auto result = rawviewer::application::BayerExtractService().execute(request);
+    QVERIFY(!result.succeeded());
+    QCOMPARE(QString::fromStdString(result.errorCode),
+             QStringLiteral("bayer.invalid_region"));
+
+    request.channel = rawviewer::domain::BayerChannel::B;
+    request.sourceRegion = rawviewer::application::PixelRegion{0, 0, 1, 1};
+    result = rawviewer::application::BayerExtractService().execute(request);
+    QVERIFY(!result.succeeded());
+    QCOMPARE(QString::fromStdString(result.errorCode),
+             QStringLiteral("bayer.empty_channel"));
+}
+
+void DocumentSessionTest::cancelsBayerExtraction() {
+    rawviewer::application::BayerExtractRequest request;
+    request.source = makeBayerImage(5, 5);
+    request.channel = rawviewer::domain::BayerChannel::R;
+    request.cancellation = std::make_shared<std::atomic_bool>(true);
+    const auto result =
+        rawviewer::application::BayerExtractService().execute(request);
+    QVERIFY(!result.succeeded());
+    QCOMPARE(QString::fromStdString(result.errorCode),
+             QStringLiteral("task.cancelled"));
 }
 
 QTEST_APPLESS_MAIN(DocumentSessionTest)

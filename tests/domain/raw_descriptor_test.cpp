@@ -21,6 +21,7 @@ private slots:
     void validatesDisplayMapping();
     void mapsDisplayRange();
     void mapsAllBayerPatterns();
+    void convertsBayerAndSourceCoordinates();
 };
 
 void RawDescriptorTest::acceptsTightUInt16() {
@@ -138,6 +139,48 @@ void RawDescriptorTest::mapsAllBayerPatterns() {
     QCOMPARE(bayerChannelAt(BayerPattern::GBRG, 0, 1), BayerChannel::R);
     QCOMPARE(bayerChannelAt(BayerPattern::GBRG, 1, 1), BayerChannel::Gr);
     QCOMPARE(bayerChannelAt(BayerPattern::None, 0, 0), BayerChannel::None);
+}
+
+void RawDescriptorTest::convertsBayerAndSourceCoordinates() {
+    using rawviewer::domain::BayerChannel;
+    using rawviewer::domain::BayerCoordinate;
+    using rawviewer::domain::BayerPattern;
+    using rawviewer::domain::bayerChannelOffset;
+    using rawviewer::domain::bayerChannelToSource;
+    using rawviewer::domain::sourceToBayerChannel;
+
+    const std::optional<BayerCoordinate> origin00 = BayerCoordinate{0, 0};
+    const std::optional<BayerCoordinate> origin11 = BayerCoordinate{1, 1};
+    QCOMPARE(bayerChannelOffset(BayerPattern::RGGB, BayerChannel::R),
+             origin00);
+    QCOMPARE(bayerChannelOffset(BayerPattern::BGGR, BayerChannel::R),
+             origin11);
+    QCOMPARE(bayerChannelOffset(BayerPattern::GRBG, BayerChannel::Gr),
+             origin00);
+    QCOMPARE(bayerChannelOffset(BayerPattern::GBRG, BayerChannel::Gb),
+             origin00);
+
+    const std::optional<BayerCoordinate> source56 = BayerCoordinate{5, 6};
+    const std::optional<BayerCoordinate> channel23 = BayerCoordinate{2, 3};
+    QCOMPARE(bayerChannelToSource(BayerPattern::RGGB,
+                                  BayerChannel::Gr,
+                                  2,
+                                  3),
+             source56);
+    QCOMPARE(sourceToBayerChannel(BayerPattern::RGGB,
+                                  BayerChannel::Gr,
+                                  5,
+                                  6),
+             channel23);
+    QVERIFY(!sourceToBayerChannel(BayerPattern::RGGB,
+                                  BayerChannel::Gr,
+                                  4,
+                                  6));
+    QVERIFY(!bayerChannelToSource(
+        BayerPattern::RGGB,
+        BayerChannel::R,
+        std::numeric_limits<std::uint64_t>::max(),
+        0));
 }
 
 QTEST_APPLESS_MAIN(RawDescriptorTest)
