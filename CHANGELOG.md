@@ -24,3 +24,7 @@
 - 增加三栏主窗口、文件浏览、拖放、五种主题、预览直方图、缩放平移和状态栏像素查询。
 - 增加异步打开、取消标志、generation 保护、结构化错误和本地日志。
 - 增加 RAW 尺寸安全、端序、header、stride、UInt32/Float32 和真实 Hasselblad 样本测试。
+- 增加不可变原始信号、显示映射 revision 和 CPU 参考预览重映射。
+- 增加 Sensor BLV / Display BLV 分离、Display WLV、Gamma 和恢复图像默认值控制。
+- 增加每文档独立的五步显示参数撤销/重做，并验证历史隔离和预览不修改原始数据。
+- 修正 LibRaw 黑电平语义为基础黑电平与四通道偏移之和；Hasselblad 样本默认值为 4093.5。

@@ -1,6 +1,6 @@
 # 项目状态
 
-- 当前版本阶段：V0.2 工程骨架与基础浏览闭环（实施中）
+- 当前版本阶段：V0.3 非破坏处理与基础分析（第一批实施中）
 - 状态日期：2026-07-31
 - 默认分支：`main`
 
@@ -21,19 +21,23 @@
 - 完成普通图片、四类 byte-aligned 平面 RAW 与相机 RAW 基础解码；
 - 完成后台打开、取消标志、generation 保护、平移、缩放和原始像素查询；
 - 合成 RAW 测试及 `CAMERA-HB-X2D-001` 产品 LibRaw 集成测试通过。
+- V0.2 已通过 Pull Request #2 合并到 `main`；
+- 建立不可变原始信号、DisplayMapping 与文档 revision；
+- 完成 Sensor BLV / Display BLV 分离、Display WLV、Gamma 和默认值复位；
+- 完成每文档独立、最多五个逻辑操作的参数撤销/重做。
 
 ## 当前进行
 
-- 完成 V0.2 UI 交互自动化与干净环境 CI 验证；
-- 补齐普通 JPG/PNG/BMP 黄金样本测试；
-- 校准约 100 MP 样本的首次预览和工作集；
+- 实施 P2-03 Pixel Info、P2-04 Bayer Extract、P2-05 ROI Statistics 和 P2-06 双图对比；
+- 为显示参数连续编辑增加节流，并为后续瓦片缓存接入完整 revision 键；
+- 补齐普通 JPG/PNG/BMP 黄金样本和更多 UI 自动化测试；
 - V0.4 前再准备至少 200 MP / 400 MB 的合法性能样本。
 
 ## 下一里程碑
 
-V0.2：完成 CI、UI 验收和第一阶段 Pull Request。
+V0.3：完成像素信息、Bayer 提取、ROI 基础统计与双图对比闭环。
 
-出口条件见 `docs/plans/v0.1-three-stage-implementation.md` 第 3.3 节。
+出口条件见 `docs/plans/v0.1-three-stage-implementation.md` 第 4.3 节。
 
 ## 已确认决策
 
@@ -73,3 +77,4 @@ V0.2：完成 CI、UI 验收和第一阶段 Pull Request。
 | 2026-07-31 | `CAMERA-HB-X2D-001` | SHA-256、TIFF 签名、LibRaw 元数据、解码数组与当前设备规格已核验 |
 | 2026-07-31 | V0.2 Debug | MSVC 19.30 + Qt 6.8.3 + LibRaw 0.22.2 编译成功；CTest 2/2 通过 |
 | 2026-07-31 | 产品 LibRaw + `CAMERA-HB-X2D-001` | 11904×8842 UInt16 RGGB、Hasselblad X2D 100C 集成测试通过；8 项测试通过 |
+| 2026-07-31 | V0.3 第一批 Debug/Release + UI | 两种配置 CTest 均 3/3 通过；BLV/WLV/Gamma、真实样本默认值、撤销与重做窗口验收通过 |

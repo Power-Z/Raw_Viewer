@@ -4,9 +4,12 @@
 #include "presentation/image_viewport.h"
 #include "presentation/theme_manager.h"
 
+#include "application/preview_renderer.h"
+
 #include <QActionGroup>
 #include <QApplication>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -20,6 +23,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QSettings>
 #include <QSpinBox>
 #include <QSplitter>
@@ -101,10 +105,26 @@ void MainWindow::createMenus() {
     fileMenu->addAction(tr("退出"), QKeySequence::Quit, this, &QWidget::close);
 
     auto* editMenu = menuBar()->addMenu(tr("编辑(&E)"));
-    auto* undo = editMenu->addAction(tr("撤销"));
-    auto* redo = editMenu->addAction(tr("重做"));
-    undo->setEnabled(false);
-    redo->setEnabled(false);
+    undoAction_ = editMenu->addAction(tr("撤销"));
+    redoAction_ = editMenu->addAction(tr("重做"));
+    undoAction_->setShortcut(QKeySequence::Undo);
+    redoAction_->setShortcut(QKeySequence::Redo);
+    undoAction_->setEnabled(false);
+    redoAction_->setEnabled(false);
+    connect(undoAction_, &QAction::triggered, this, [this] {
+        if (documentSession_ && documentSession_->undo()) {
+            syncDisplayControls();
+            renderCurrentDisplay();
+            updateUndoActions();
+        }
+    });
+    connect(redoAction_, &QAction::triggered, this, [this] {
+        if (documentSession_ && documentSession_->redo()) {
+            syncDisplayControls();
+            renderCurrentDisplay();
+            updateUndoActions();
+        }
+    });
 
     auto* preferences = menuBar()->addMenu(tr("偏好(&P)"));
     auto* themes = preferences->addMenu(tr("主题"));
@@ -188,6 +208,9 @@ QWidget* MainWindow::createRawParametersPanel() {
     endianCombo_->addItems({"Little endian", "Big endian"});
     bayerCombo_ = new QComboBox(group);
     bayerCombo_->addItems({"RGGB", "BGGR", "GRBG", "GBRG", "None"});
+    sensorBlackSpin_ = new QDoubleSpinBox(group);
+    sensorBlackSpin_->setDecimals(4);
+    sensorBlackSpin_->setRange(-1.0e12, 1.0e12);
 
     form->addRow(tr("Width"), widthSpin_);
     form->addRow(tr("Height"), heightSpin_);
@@ -196,6 +219,7 @@ QWidget* MainWindow::createRawParametersPanel() {
     form->addRow(tr("Scalar"), scalarCombo_);
     form->addRow(tr("Byte order"), endianCombo_);
     form->addRow(tr("Bayer"), bayerCombo_);
+    form->addRow(tr("Sensor BLV"), sensorBlackSpin_);
 
     auto* note = new QLabel(
         tr("仅用于无头 .raw/.bin。相机 RAW 容器参数由 LibRaw 读取。"),
@@ -272,17 +296,52 @@ QWidget* MainWindow::createRightPanel() {
     histogramLayout->addWidget(new QLabel(tr("当前显示预览的灰度分布"), histogramGroup));
     layout->addWidget(histogramGroup);
 
-    auto* displayGroup = new QGroupBox(tr("显示控制（V0.3）"), panel);
+    auto* displayGroup = new QGroupBox(tr("显示控制"), panel);
     auto* displayLayout = new QFormLayout(displayGroup);
-    auto addPlaceholder = [displayGroup, displayLayout](const QString& name) {
-        auto* field = new QLineEdit(displayGroup);
-        field->setEnabled(false);
-        field->setPlaceholderText(tr("下一阶段"));
-        displayLayout->addRow(name, field);
+    auto makeDisplaySpin = [displayGroup] {
+        auto* spin = new QDoubleSpinBox(displayGroup);
+        spin->setDecimals(4);
+        spin->setRange(-1.0e12, 1.0e12);
+        spin->setKeyboardTracking(true);
+        spin->setEnabled(false);
+        return spin;
     };
-    addPlaceholder("BLV");
-    addPlaceholder("WLV");
-    addPlaceholder("Gamma");
+    blackPointSpin_ = makeDisplaySpin();
+    whitePointSpin_ = makeDisplaySpin();
+    gammaSpin_ = makeDisplaySpin();
+    gammaSpin_->setRange(0.01, 10.0);
+    gammaSpin_->setSingleStep(0.05);
+    displayLayout->addRow(tr("Display BLV"), blackPointSpin_);
+    displayLayout->addRow(tr("Display WLV"), whitePointSpin_);
+    displayLayout->addRow(tr("Gamma"), gammaSpin_);
+    resetDisplayButton_ =
+        new QPushButton(tr("恢复图像默认值"), displayGroup);
+    resetDisplayButton_->setEnabled(false);
+    displayLayout->addRow(resetDisplayButton_);
+    for (auto* spin : {blackPointSpin_, whitePointSpin_, gammaSpin_}) {
+        connect(spin,
+                qOverload<double>(&QDoubleSpinBox::valueChanged),
+                this,
+                [this] { applyDisplayControls(); });
+        connect(spin,
+                &QDoubleSpinBox::editingFinished,
+                this,
+                &MainWindow::commitDisplayEdit);
+    }
+    connect(resetDisplayButton_, &QPushButton::clicked, this, [this] {
+        if (!documentSession_) {
+            return;
+        }
+        documentSession_->beginDisplayEdit();
+        const auto result = documentSession_->updateDisplayMapping(
+            documentSession_->initialDisplayMapping());
+        if (result.valid) {
+            documentSession_->commitDisplayEdit();
+            syncDisplayControls();
+            renderCurrentDisplay();
+            updateUndoActions();
+        }
+    });
     layout->addWidget(displayGroup);
 
     auto* tools = new QGroupBox(tr("工具"), panel);
@@ -323,6 +382,7 @@ domain::RawDescriptor MainWindow::currentRawDescriptor() const {
     case 3: descriptor.bayerPattern = domain::BayerPattern::GBRG; break;
     default: descriptor.bayerPattern = domain::BayerPattern::None; break;
     }
+    descriptor.sensorBlackLevel = sensorBlackSpin_->value();
     return descriptor;
 }
 
@@ -388,9 +448,11 @@ void MainWindow::beginOpen(const QString& path) {
 
 void MainWindow::showDecoded(
     std::shared_ptr<const application::DecodedImage> image) {
-    currentImage_ = std::move(image);
-    viewport_->setImage(currentImage_);
-    histogram_->setImage(currentImage_);
+    documentSession_ =
+        std::make_unique<application::DocumentSession>(std::move(image));
+    syncDisplayControls();
+    renderCurrentDisplay(false);
+    updateUndoActions();
     imageLabel_->setText(metadataSummary(currentImage_->metadata));
     setWindowTitle(QStringLiteral("%1 — Raw Viewer")
                        .arg(QString::fromStdString(currentImage_->metadata.camera)
@@ -398,6 +460,70 @@ void MainWindow::showDecoded(
                                 .isEmpty()
                             ? QString::fromStdString(currentImage_->metadata.format)
                             : QString::fromStdString(currentImage_->metadata.camera)));
+}
+
+void MainWindow::applyDisplayControls() {
+    if (!documentSession_) {
+        return;
+    }
+    domain::DisplayMapping mapping;
+    mapping.blackPoint = blackPointSpin_->value();
+    mapping.whitePoint = whitePointSpin_->value();
+    mapping.gamma = gammaSpin_->value();
+    const auto result = documentSession_->updateDisplayMapping(mapping);
+    if (!result.valid) {
+        taskLabel_->setText(QString::fromStdString(result.message));
+        return;
+    }
+    taskLabel_->setText(tr("显示 revision %1")
+                            .arg(documentSession_->revision()));
+    renderCurrentDisplay();
+}
+
+void MainWindow::commitDisplayEdit() {
+    if (!documentSession_) {
+        return;
+    }
+    documentSession_->commitDisplayEdit();
+    updateUndoActions();
+    taskLabel_->setText(tr("就绪"));
+}
+
+void MainWindow::syncDisplayControls() {
+    if (!documentSession_) {
+        return;
+    }
+    const QSignalBlocker blockBlack(blackPointSpin_);
+    const QSignalBlocker blockWhite(whitePointSpin_);
+    const QSignalBlocker blockGamma(gammaSpin_);
+    const auto& mapping = documentSession_->displayMapping();
+    blackPointSpin_->setValue(mapping.blackPoint);
+    whitePointSpin_->setValue(mapping.whitePoint);
+    gammaSpin_->setValue(mapping.gamma);
+    blackPointSpin_->setEnabled(true);
+    whitePointSpin_->setEnabled(true);
+    gammaSpin_->setEnabled(true);
+    resetDisplayButton_->setEnabled(true);
+}
+
+void MainWindow::renderCurrentDisplay(bool preserveView) {
+    if (!documentSession_) {
+        return;
+    }
+    currentImage_ = application::PreviewRenderer::render(
+        documentSession_->original(),
+        documentSession_->displayMapping());
+    if (!currentImage_) {
+        return;
+    }
+    viewport_->setImage(currentImage_, preserveView);
+    histogram_->setImage(currentImage_);
+}
+
+void MainWindow::updateUndoActions() {
+    const bool hasDocument = static_cast<bool>(documentSession_);
+    undoAction_->setEnabled(hasDocument && documentSession_->canUndo());
+    redoAction_->setEnabled(hasDocument && documentSession_->canRedo());
 }
 
 void MainWindow::setTheme(const QString& name) {

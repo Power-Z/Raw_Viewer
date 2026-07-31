@@ -16,7 +16,8 @@ class ImageViewport final : public QWidget {
 public:
     explicit ImageViewport(QWidget* parent = nullptr);
 
-    void setImage(std::shared_ptr<const application::DecodedImage> image);
+    void setImage(std::shared_ptr<const application::DecodedImage> image,
+                  bool preserveView = false);
     void clearImage();
     void fitToWindow();
     double zoom() const noexcept { return zoom_; }

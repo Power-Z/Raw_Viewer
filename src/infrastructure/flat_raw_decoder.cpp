@@ -218,11 +218,20 @@ application::DecodeResult FlatRawDecoder::decode(
     decoded->metadata.format = "Flat RAW";
     decoded->metadata.details =
         std::string(domain::toString(request.flatRawDescriptor->byteOrder));
+    decoded->metadata.sensorBlackLevel =
+        request.flatRawDescriptor->sensorBlackLevel;
+    decoded->metadata.whiteLevel = maximum;
     decoded->pixels = pixels;
     decoded->preview.width = previewWidth;
     decoded->preview.height = previewHeight;
     decoded->preview.rgba.resize(
         static_cast<std::size_t>(previewWidth) * previewHeight * 4);
+    auto signalPreview = std::make_shared<application::SignalPreview>();
+    signalPreview->width = previewWidth;
+    signalPreview->height = previewHeight;
+    signalPreview->values.resize(
+        static_cast<std::size_t>(previewWidth) * previewHeight);
+    decoded->signalPreview = signalPreview;
 
     const double range = maximum - minimum;
     for (int y = 0; y < previewHeight; ++y) {
@@ -242,6 +251,8 @@ application::DecodeResult FlatRawDecoder::decode(
                 std::round(normalized * 255.0));
             const auto index =
                 (static_cast<std::size_t>(y) * previewWidth + x) * 4;
+            signalPreview->values[index / 4] =
+                sample.valid ? static_cast<float>(sample.value) : 0.0F;
             decoded->preview.rgba[index] = gray;
             decoded->preview.rgba[index + 1] = gray;
             decoded->preview.rgba[index + 2] = gray;

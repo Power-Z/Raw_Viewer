@@ -23,7 +23,8 @@ ImageViewport::ImageViewport(QWidget* parent)
 }
 
 void ImageViewport::setImage(
-    std::shared_ptr<const application::DecodedImage> image) {
+    std::shared_ptr<const application::DecodedImage> image,
+    bool preserveView) {
     image_ = std::move(image);
     if (!image_ || image_->preview.rgba.empty()) {
         clearImage();
@@ -35,8 +36,12 @@ void ImageViewport::setImage(
                       source.height,
                       source.width * 4,
                       QImage::Format_RGBA8888).copy();
-    fitMode_ = true;
-    fitToWindow();
+    if (preserveView) {
+        update();
+    } else {
+        fitMode_ = true;
+        fitToWindow();
+    }
 }
 
 void ImageViewport::clearImage() {

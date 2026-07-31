@@ -29,6 +29,12 @@ struct DisplayImage {
     std::vector<std::uint8_t> rgba;
 };
 
+struct SignalPreview {
+    int width = 0;
+    int height = 0;
+    std::vector<float> values;
+};
+
 enum class ImageKind {
     Standard,
     FlatRaw,
@@ -44,10 +50,13 @@ struct ImageMetadata {
     std::string camera;
     std::string format;
     std::string details;
+    double sensorBlackLevel = 0.0;
+    double whiteLevel = 255.0;
 };
 
 struct DecodedImage {
     DisplayImage preview;
+    std::shared_ptr<const SignalPreview> signalPreview;
     ImageMetadata metadata;
     std::shared_ptr<const IPixelSource> pixels;
 };

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "application/document_session.h"
 #include "application/open_image_service.h"
 
 #include <QMainWindow>
@@ -8,9 +9,12 @@
 #include <memory>
 
 class QComboBox;
+class QDoubleSpinBox;
 class QFileSystemModel;
 class QLabel;
 class QLineEdit;
+class QPushButton;
+class QAction;
 class QSpinBox;
 class QTreeView;
 
@@ -41,9 +45,15 @@ private:
     void showDecoded(std::shared_ptr<const application::DecodedImage> image);
     void setTheme(const QString& name);
     void updateCoordinate(qint64 x, qint64 y, bool inside);
+    void applyDisplayControls();
+    void commitDisplayEdit();
+    void syncDisplayControls();
+    void renderCurrentDisplay(bool preserveView = true);
+    void updateUndoActions();
 
     std::shared_ptr<const application::OpenImageService> openService_;
     std::shared_ptr<const application::DecodedImage> currentImage_;
+    std::unique_ptr<application::DocumentSession> documentSession_;
     std::shared_ptr<std::atomic_bool> cancellation_;
     std::uint64_t generation_ = 0;
 
@@ -59,6 +69,13 @@ private:
     QComboBox* scalarCombo_ = nullptr;
     QComboBox* endianCombo_ = nullptr;
     QComboBox* bayerCombo_ = nullptr;
+    QDoubleSpinBox* sensorBlackSpin_ = nullptr;
+    QDoubleSpinBox* blackPointSpin_ = nullptr;
+    QDoubleSpinBox* whitePointSpin_ = nullptr;
+    QDoubleSpinBox* gammaSpin_ = nullptr;
+    QPushButton* resetDisplayButton_ = nullptr;
+    QAction* undoAction_ = nullptr;
+    QAction* redoAction_ = nullptr;
     QLabel* coordinateLabel_ = nullptr;
     QLabel* imageLabel_ = nullptr;
     QLabel* zoomLabel_ = nullptr;

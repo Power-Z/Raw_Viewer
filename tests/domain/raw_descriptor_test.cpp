@@ -1,4 +1,5 @@
 #include "domain/raw_descriptor.h"
+#include "domain/display_mapping.h"
 
 #include <QTest>
 
@@ -17,6 +18,8 @@ private slots:
     void rejectsTruncation();
     void rejectsSmallStride();
     void rejectsOverflow();
+    void validatesDisplayMapping();
+    void mapsDisplayRange();
 };
 
 void RawDescriptorTest::acceptsTightUInt16() {
@@ -81,6 +84,32 @@ void RawDescriptorTest::rejectsOverflow() {
     QVERIFY(!result.valid);
     QCOMPARE(QString::fromStdString(result.errorCode),
              QStringLiteral("raw.size_overflow"));
+}
+
+void RawDescriptorTest::validatesDisplayMapping() {
+    rawviewer::domain::DisplayMapping mapping;
+    mapping.blackPoint = 100.0;
+    mapping.whitePoint = 100.0;
+    QVERIFY(!rawviewer::domain::validateDisplayMapping(mapping).valid);
+
+    mapping.whitePoint = 1000.0;
+    mapping.gamma = 0.0;
+    QVERIFY(!rawviewer::domain::validateDisplayMapping(mapping).valid);
+
+    mapping.gamma = 2.2;
+    QVERIFY(rawviewer::domain::validateDisplayMapping(mapping).valid);
+}
+
+void RawDescriptorTest::mapsDisplayRange() {
+    rawviewer::domain::DisplayMapping mapping;
+    mapping.blackPoint = 100.0;
+    mapping.whitePoint = 1100.0;
+    mapping.gamma = 1.0;
+    QCOMPARE(rawviewer::domain::mapDisplayValue(0.0, mapping), 0.0);
+    QCOMPARE(rawviewer::domain::mapDisplayValue(100.0, mapping), 0.0);
+    QCOMPARE(rawviewer::domain::mapDisplayValue(600.0, mapping), 0.5);
+    QCOMPARE(rawviewer::domain::mapDisplayValue(1100.0, mapping), 1.0);
+    QCOMPARE(rawviewer::domain::mapDisplayValue(2000.0, mapping), 1.0);
 }
 
 QTEST_APPLESS_MAIN(RawDescriptorTest)

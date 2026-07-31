@@ -89,6 +89,8 @@ application::DecodeResult QtImageDecoder::decode(
     decoded->metadata.height = static_cast<std::uint64_t>(image.height());
     decoded->metadata.scalarType = domain::ScalarType::UInt8;
     decoded->metadata.format = reader.format().toUpper().toStdString();
+    decoded->metadata.sensorBlackLevel = 0.0;
+    decoded->metadata.whiteLevel = 255.0;
     decoded->pixels = std::make_shared<QtPixelSource>(image);
 
     const int maxSide = 2048;

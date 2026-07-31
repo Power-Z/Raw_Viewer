@@ -1,4 +1,5 @@
 add_library(rawviewer_domain STATIC
+    display_mapping.cpp
     raw_descriptor.cpp
 )
 

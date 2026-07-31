@@ -14,8 +14,8 @@
 | DATA-001 | 拖拽或文件树打开 | 架构 6、10；`ImageViewport` / `MainWindow` | P1-03 | Implemented |
 | DATA-002 | JPG/BMP/PNG 直接打开 | 架构 5.3、7；`QtImageDecoder` | P1-03 | Implemented |
 | DATA-003 | 平面 RAW/BIN 按参数打开；相机 RAW 按内容探测 | 架构 7.2～7.4、ADR-0003；decoder tests | P1-04/P1-04B | Verified |
-| DATA-004 | 原始/中间/显示三层且原始不变 | 架构 7.1、ADR-0002；只读 `IPixelSource` + `DisplayImage` | P2-01 | Implemented |
-| DATA-005 | 基础 ISP 与五步撤销 | 架构 9、12 | P2-01/P2-02 | Planned |
+| DATA-004 | 原始/中间/显示三层且原始不变 | 架构 7.1、ADR-0002；`DocumentSession` + `PreviewRenderer`；`DocumentSessionTest::rendersWithoutChangingOriginal` | P2-01 | Verified |
+| DATA-005 | 基础 ISP 与五步撤销 | 架构 9、12；`DisplayMapping` + `DocumentSession`；application/domain tests | P2-01/P2-02 | Implemented |
 | DATA-006 | 200 MP / 400 MB 大图 | 架构 8、ADR-0002/0003 | P3-01～P3-03 | Planned |
 | VIEW-001 | 无工具时左键拖动、滚轮鼠标锚点缩放 | 架构 10.1；`ImageViewport` | P1-05 | Implemented |
 | VIEW-002 | 多图同步，Alt+左键单独拖动 | 架构 10.2 | P2-06 | Planned |

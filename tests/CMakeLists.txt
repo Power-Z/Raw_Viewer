@@ -8,6 +8,16 @@ target_link_libraries(rawviewer_domain_tests
 )
 add_test(NAME rawviewer_domain_tests COMMAND rawviewer_domain_tests)
 
+add_executable(rawviewer_application_tests
+    application/document_session_test.cpp
+)
+target_link_libraries(rawviewer_application_tests
+    PRIVATE
+        rawviewer_application
+        Qt6::Test
+)
+add_test(NAME rawviewer_application_tests COMMAND rawviewer_application_tests)
+
 add_executable(rawviewer_decoder_tests
     infrastructure/decoder_test.cpp
 )

@@ -150,7 +150,12 @@ application::DecodeResult CameraRawDecoder::decode(
     const auto& data = pixels->raw().imgdata;
     const auto [previewWidth, previewHeight] =
         previewSize(pixels->width(), pixels->height());
-    const double black = data.color.black;
+    const double channelOffset =
+        (static_cast<double>(data.color.cblack[0]) +
+         data.color.cblack[1] +
+         data.color.cblack[2] +
+         data.color.cblack[3]) / 4.0;
+    const double black = static_cast<double>(data.color.black) + channelOffset;
     const double white = std::max<double>(black + 1.0, data.color.maximum);
 
     auto decoded = std::make_shared<application::DecodedImage>();
@@ -162,14 +167,16 @@ application::DecodeResult CameraRawDecoder::decode(
     decoded->metadata.camera =
         std::string(data.idata.make) + " " + std::string(data.idata.model);
     decoded->metadata.format = "Camera RAW / LibRaw";
+    decoded->metadata.sensorBlackLevel = black;
+    decoded->metadata.whiteLevel = data.color.maximum;
     std::ostringstream details;
     details << "active " << data.sizes.width << 'x' << data.sizes.height
             << ", margin " << data.sizes.left_margin << ','
             << data.sizes.top_margin
-            << ", black " << data.color.cblack[0] << '/'
-            << data.color.cblack[1] << '/'
-            << data.color.cblack[2] << '/'
-            << data.color.cblack[3]
+            << ", black " << data.color.black + data.color.cblack[0] << '/'
+            << data.color.black + data.color.cblack[1] << '/'
+            << data.color.black + data.color.cblack[2] << '/'
+            << data.color.black + data.color.cblack[3]
             << ", white " << data.color.maximum;
     decoded->metadata.details = details.str();
     decoded->pixels = pixels;
@@ -177,6 +184,12 @@ application::DecodeResult CameraRawDecoder::decode(
     decoded->preview.height = previewHeight;
     decoded->preview.rgba.resize(
         static_cast<std::size_t>(previewWidth) * previewHeight * 4);
+    auto signalPreview = std::make_shared<application::SignalPreview>();
+    signalPreview->width = previewWidth;
+    signalPreview->height = previewHeight;
+    signalPreview->values.resize(
+        static_cast<std::size_t>(previewWidth) * previewHeight);
+    decoded->signalPreview = signalPreview;
 
     auto previewSample = [&pixels](std::uint64_t x, std::uint64_t y) {
         const std::uint64_t originX = x & ~std::uint64_t{1};
@@ -215,6 +228,8 @@ application::DecodeResult CameraRawDecoder::decode(
                 std::round(std::pow(normalized, 1.0 / 2.2) * 255.0));
             const auto index =
                 (static_cast<std::size_t>(y) * previewWidth + x) * 4;
+            signalPreview->values[index / 4] =
+                sample.valid ? static_cast<float>(sample.value) : 0.0F;
             decoded->preview.rgba[index] = gray;
             decoded->preview.rgba[index + 1] = gray;
             decoded->preview.rgba[index + 2] = gray;

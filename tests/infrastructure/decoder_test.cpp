@@ -6,6 +6,7 @@
 #include <QTest>
 
 #include <atomic>
+#include <cmath>
 #include <filesystem>
 #include <memory>
 
@@ -195,6 +196,8 @@ void DecoderTest::verifiesApprovedCameraSampleWhenConfigured() {
              rawviewer::domain::ScalarType::UInt16);
     QCOMPARE(result.image->metadata.bayerPattern,
              rawviewer::domain::BayerPattern::RGGB);
+    QVERIFY(std::abs(result.image->metadata.sensorBlackLevel - 4093.5) < 0.01);
+    QCOMPARE(result.image->metadata.whiteLevel, 65535.0);
     QVERIFY(QString::fromStdString(result.image->metadata.camera)
                 .contains("Hasselblad", Qt::CaseInsensitive));
     QVERIFY(QString::fromStdString(result.image->metadata.camera)
