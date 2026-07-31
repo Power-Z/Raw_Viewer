@@ -1,12 +1,16 @@
 #pragma once
 
 #include "application/image_types.h"
+#include "domain/display_mapping.h"
+#include "presentation/pixel_overlay_options.h"
 
 #include <QImage>
 #include <QPointF>
 #include <QWidget>
 
 #include <memory>
+
+class QPainter;
 
 namespace rawviewer::presentation {
 
@@ -20,6 +24,8 @@ public:
                   bool preserveView = false);
     void clearImage();
     void fitToWindow();
+    void setDisplayMapping(const domain::DisplayMapping& mapping);
+    void setPixelOverlayOptions(const PixelOverlayOptions& options);
     double zoom() const noexcept { return zoom_; }
 
 signals:
@@ -40,12 +46,15 @@ protected:
 private:
     QPointF imageCoordinate(const QPointF& widgetPoint) const;
     void publishCoordinate(const QPointF& widgetPoint);
+    void drawPixelOverlay(QPainter& painter);
 
     std::shared_ptr<const application::DecodedImage> image_;
     QImage preview_;
     double zoom_ = 1.0;
     QPointF offset_;
     QPointF lastMouse_;
+    domain::DisplayMapping displayMapping_;
+    PixelOverlayOptions overlayOptions_;
     bool dragging_ = false;
     bool fitMode_ = true;
 };

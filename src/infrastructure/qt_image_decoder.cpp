@@ -29,7 +29,14 @@ public:
             return {};
         }
         const QRgb pixel = image_.pixel(static_cast<int>(x), static_cast<int>(y));
-        return {true, static_cast<double>(qGray(pixel))};
+        return {
+            true,
+            static_cast<double>(qGray(pixel)),
+            true,
+            static_cast<std::uint8_t>(qRed(pixel)),
+            static_cast<std::uint8_t>(qGreen(pixel)),
+            static_cast<std::uint8_t>(qBlue(pixel))
+        };
     }
 
 private:

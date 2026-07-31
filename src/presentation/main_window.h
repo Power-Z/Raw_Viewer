@@ -16,12 +16,14 @@ class QLineEdit;
 class QPushButton;
 class QAction;
 class QSpinBox;
+class QTimer;
 class QTreeView;
 
 namespace rawviewer::presentation {
 
 class HistogramWidget;
 class ImageViewport;
+class PixelInfoDialog;
 
 class MainWindow final : public QMainWindow {
     Q_OBJECT
@@ -45,6 +47,8 @@ private:
     void showDecoded(std::shared_ptr<const application::DecodedImage> image);
     void setTheme(const QString& name);
     void updateCoordinate(qint64 x, qint64 y, bool inside);
+    void flushCoordinateUpdate();
+    void openPixelInfo();
     void applyDisplayControls();
     void commitDisplayEdit();
     void syncDisplayControls();
@@ -74,12 +78,20 @@ private:
     QDoubleSpinBox* whitePointSpin_ = nullptr;
     QDoubleSpinBox* gammaSpin_ = nullptr;
     QPushButton* resetDisplayButton_ = nullptr;
+    QPushButton* pixelInfoButton_ = nullptr;
     QAction* undoAction_ = nullptr;
     QAction* redoAction_ = nullptr;
+    QAction* pixelInfoAction_ = nullptr;
+    PixelInfoDialog* pixelInfoDialog_ = nullptr;
+    QTimer* coordinateTimer_ = nullptr;
+    QTimer* displayRenderTimer_ = nullptr;
     QLabel* coordinateLabel_ = nullptr;
     QLabel* imageLabel_ = nullptr;
     QLabel* zoomLabel_ = nullptr;
     QLabel* taskLabel_ = nullptr;
+    qint64 pendingCoordinateX_ = 0;
+    qint64 pendingCoordinateY_ = 0;
+    bool pendingCoordinateInside_ = false;
 };
 
 } // namespace rawviewer::presentation

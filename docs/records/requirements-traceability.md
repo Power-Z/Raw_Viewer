@@ -19,8 +19,8 @@
 | DATA-006 | 200 MP / 400 MB 大图 | 架构 8、ADR-0002/0003 | P3-01～P3-03 | Planned |
 | VIEW-001 | 无工具时左键拖动、滚轮鼠标锚点缩放 | 架构 10.1；`ImageViewport` | P1-05 | Implemented |
 | VIEW-002 | 多图同步，Alt+左键单独拖动 | 架构 10.2 | P2-06 | Planned |
-| VIEW-003 | 放大后标注 RAW 信号或 RGB | 架构 8.4、10.1 | P2-03 | Planned |
-| TOOL-001 | Pixel Info 信号、mesh、pattern 标注 | 架构 10.3、12 | P2-03 | Planned |
+| VIEW-003 | 放大后标注 RAW 信号或 RGB | 架构 8.4、10.1；`ImageViewport::drawPixelOverlay`；Pixel Info/decoder tests | P2-03 | Verified |
+| TOOL-001 | Pixel Info 信号、mesh、pattern 标注 | 架构 10.3、12；`queryPixelInfo` + `PixelInfoDialog`；四 pattern 测试与 `CAMERA-HB-X2D-001` UI 验收 | P2-03 | Verified |
 | TOOL-002 | Pixel Statistics 四种模式 | 架构 11 | P2-05/P3-04 | Planned |
 | TOOL-003 | Bayer pattern 特定像素提取 | 架构 12 | P2-04 | Planned |
 | TOOL-004 | 预留复杂 ISP 工具 | 架构 12 | P2-01，持续 | Planned |

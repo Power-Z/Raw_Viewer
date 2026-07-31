@@ -2,8 +2,10 @@
 
 #include "presentation/histogram_widget.h"
 #include "presentation/image_viewport.h"
+#include "presentation/pixel_info_dialog.h"
 #include "presentation/theme_manager.h"
 
+#include "application/pixel_info.h"
 #include "application/preview_renderer.h"
 
 #include <QActionGroup>
@@ -29,6 +31,7 @@
 #include <QSplitter>
 #include <QStatusBar>
 #include <QToolButton>
+#include <QTimer>
 #include <QTreeView>
 #include <QVBoxLayout>
 #include <QtConcurrent>
@@ -55,6 +58,7 @@ MainWindow::MainWindow(
       openService_(std::move(openService)) {
     setWindowTitle(tr("Raw Viewer"));
     resize(1440, 900);
+    pixelInfoDialog_ = new PixelInfoDialog(this);
     createMenus();
     createStatusBar();
 
@@ -75,6 +79,21 @@ MainWindow::MainWindow(
             this, &MainWindow::updateCoordinate);
     connect(viewport_, &ImageViewport::zoomChanged, this, [this](double zoom) {
         zoomLabel_->setText(tr("缩放 %1%").arg(zoom * 100.0, 0, 'f', 1));
+    });
+    connect(pixelInfoDialog_,
+            &PixelInfoDialog::optionsChanged,
+            viewport_,
+            &ImageViewport::setPixelOverlayOptions);
+    coordinateTimer_ = new QTimer(this);
+    coordinateTimer_->setSingleShot(true);
+    coordinateTimer_->setInterval(16);
+    connect(coordinateTimer_, &QTimer::timeout,
+            this, &MainWindow::flushCoordinateUpdate);
+    displayRenderTimer_ = new QTimer(this);
+    displayRenderTimer_->setSingleShot(true);
+    displayRenderTimer_->setInterval(16);
+    connect(displayRenderTimer_, &QTimer::timeout, this, [this] {
+        renderCurrentDisplay();
     });
 
     QSettings settings;
@@ -113,6 +132,7 @@ void MainWindow::createMenus() {
     redoAction_->setEnabled(false);
     connect(undoAction_, &QAction::triggered, this, [this] {
         if (documentSession_ && documentSession_->undo()) {
+            displayRenderTimer_->stop();
             syncDisplayControls();
             renderCurrentDisplay();
             updateUndoActions();
@@ -120,6 +140,7 @@ void MainWindow::createMenus() {
     });
     connect(redoAction_, &QAction::triggered, this, [this] {
         if (documentSession_ && documentSession_->redo()) {
+            displayRenderTimer_->stop();
             syncDisplayControls();
             renderCurrentDisplay();
             updateUndoActions();
@@ -141,22 +162,23 @@ void MainWindow::createMenus() {
     }
 
     auto* toolMenu = menuBar()->addMenu(tr("Tool(&T)"));
-    for (const QString& tool : {
-             tr("Pixel Info（V0.3）"),
-             tr("Pixel Statistics（V0.3）"),
-             tr("Bayer Extract（V0.3）")}) {
-        auto* action = toolMenu->addAction(tool);
-        action->setEnabled(false);
-    }
+    pixelInfoAction_ = toolMenu->addAction(tr("Pixel Info"));
+    pixelInfoAction_->setEnabled(false);
+    connect(pixelInfoAction_, &QAction::triggered,
+            this, &MainWindow::openPixelInfo);
+    auto* statisticsAction = toolMenu->addAction(tr("Pixel Statistics（V0.3）"));
+    statisticsAction->setEnabled(false);
+    auto* extractAction = toolMenu->addAction(tr("Bayer Extract（V0.3）"));
+    extractAction->setEnabled(false);
 
     auto* helpMenu = menuBar()->addMenu(tr("帮助(&H)"));
     helpMenu->addAction(tr("关于 Raw Viewer"), this, [this] {
         QMessageBox::about(
             this,
             tr("关于 Raw Viewer"),
-            tr("<b>Raw Viewer 0.2.0</b><br>"
-               "第一阶段：基础浏览、平面 RAW 与相机 RAW 解码闭环。<br>"
-               "输入文件只读，处理功能将在 V0.3 提供。"));
+            tr("<b>Raw Viewer 0.3.0-dev</b><br>"
+               "第二阶段：非破坏显示处理、五步撤销与 Pixel Info。<br>"
+               "输入文件和原始像素始终保持只读。"));
     });
 }
 
@@ -336,6 +358,7 @@ QWidget* MainWindow::createRightPanel() {
         const auto result = documentSession_->updateDisplayMapping(
             documentSession_->initialDisplayMapping());
         if (result.valid) {
+            displayRenderTimer_->stop();
             documentSession_->commitDisplayEdit();
             syncDisplayControls();
             renderCurrentDisplay();
@@ -346,8 +369,12 @@ QWidget* MainWindow::createRightPanel() {
 
     auto* tools = new QGroupBox(tr("工具"), panel);
     auto* toolLayout = new QVBoxLayout(tools);
+    pixelInfoButton_ = new QPushButton(tr("Pixel Info"), tools);
+    pixelInfoButton_->setEnabled(false);
+    connect(pixelInfoButton_, &QPushButton::clicked,
+            this, &MainWindow::openPixelInfo);
+    toolLayout->addWidget(pixelInfoButton_);
     for (const QString& name : {
-             "Pixel Info — V0.3",
              "Pixel Statistics — V0.3",
              "Bayer Extract — V0.3",
              "ISP tools — reserved"}) {
@@ -453,6 +480,8 @@ void MainWindow::showDecoded(
     syncDisplayControls();
     renderCurrentDisplay(false);
     updateUndoActions();
+    pixelInfoAction_->setEnabled(true);
+    pixelInfoButton_->setEnabled(true);
     imageLabel_->setText(metadataSummary(currentImage_->metadata));
     setWindowTitle(QStringLiteral("%1 — Raw Viewer")
                        .arg(QString::fromStdString(currentImage_->metadata.camera)
@@ -477,7 +506,9 @@ void MainWindow::applyDisplayControls() {
     }
     taskLabel_->setText(tr("显示 revision %1")
                             .arg(documentSession_->revision()));
-    renderCurrentDisplay();
+    if (!displayRenderTimer_->isActive()) {
+        displayRenderTimer_->start();
+    }
 }
 
 void MainWindow::commitDisplayEdit() {
@@ -516,6 +547,7 @@ void MainWindow::renderCurrentDisplay(bool preserveView) {
     if (!currentImage_) {
         return;
     }
+    viewport_->setDisplayMapping(documentSession_->displayMapping());
     viewport_->setImage(currentImage_, preserveView);
     histogram_->setImage(currentImage_);
 }
@@ -537,17 +569,57 @@ void MainWindow::setTheme(const QString& name) {
 }
 
 void MainWindow::updateCoordinate(qint64 x, qint64 y, bool inside) {
-    if (!inside || !currentImage_ || !currentImage_->pixels) {
+    pendingCoordinateX_ = x;
+    pendingCoordinateY_ = y;
+    pendingCoordinateInside_ = inside;
+    if (!coordinateTimer_->isActive()) {
+        coordinateTimer_->start();
+    }
+}
+
+void MainWindow::flushCoordinateUpdate() {
+    if (!pendingCoordinateInside_ || !documentSession_ ||
+        !documentSession_->original()->pixels) {
         coordinateLabel_->setText(tr("坐标 —"));
         return;
     }
-    const auto sample = currentImage_->pixels->sample(
-        static_cast<std::uint64_t>(x),
-        static_cast<std::uint64_t>(y));
+    const auto info = application::queryPixelInfo(
+        *documentSession_->original(),
+        documentSession_->displayMapping(),
+        static_cast<std::uint64_t>(pendingCoordinateX_),
+        static_cast<std::uint64_t>(pendingCoordinateY_));
+    if (!info.valid) {
+        coordinateLabel_->setText(
+            tr("坐标 %1, %2 | 值 —")
+                .arg(pendingCoordinateX_)
+                .arg(pendingCoordinateY_));
+        return;
+    }
+    QString channel;
+    if (info.channel != domain::BayerChannel::None) {
+        channel = tr(" | %1").arg(
+            QString::fromLatin1(domain::toString(info.channel)));
+    }
     coordinateLabel_->setText(
-        sample.valid
-            ? tr("坐标 %1, %2 | 值 %3").arg(x).arg(y).arg(sample.value, 0, 'g', 10)
-            : tr("坐标 %1, %2 | 值 —").arg(x).arg(y));
+        tr("坐标 %1, %2 | Raw %3 | Display %4 | RGB %5,%6,%7%8")
+            .arg(pendingCoordinateX_)
+            .arg(pendingCoordinateY_)
+            .arg(info.originalValue, 0, 'g', 10)
+            .arg(info.processedValue, 0, 'f', 4)
+            .arg(info.red)
+            .arg(info.green)
+            .arg(info.blue)
+            .arg(channel));
+}
+
+void MainWindow::openPixelInfo() {
+    if (!documentSession_) {
+        return;
+    }
+    viewport_->setPixelOverlayOptions(pixelInfoDialog_->options());
+    pixelInfoDialog_->show();
+    pixelInfoDialog_->raise();
+    pixelInfoDialog_->activateWindow();
 }
 
 } // namespace rawviewer::presentation

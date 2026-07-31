@@ -12,6 +12,10 @@ namespace rawviewer::application {
 struct PixelSample {
     bool valid = false;
     double value = 0.0;
+    bool rgbValid = false;
+    std::uint8_t red = 0;
+    std::uint8_t green = 0;
+    std::uint8_t blue = 0;
 };
 
 class IPixelSource {

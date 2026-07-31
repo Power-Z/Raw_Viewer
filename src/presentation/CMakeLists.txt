@@ -2,6 +2,7 @@ add_library(rawviewer_presentation STATIC
     histogram_widget.cpp
     image_viewport.cpp
     main_window.cpp
+    pixel_info_dialog.cpp
     theme_manager.cpp
 )
 

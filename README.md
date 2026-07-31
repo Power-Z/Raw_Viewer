@@ -16,6 +16,7 @@
 - 原始信号与显示预览分离，调整显示参数不会修改原始图像；
 - Sensor BLV 与 Display BLV 分离，并提供 Display WLV、Gamma 和图像默认值复位；
 - 每个文档独立的五步参数撤销/重做，显示变化保持当前缩放与平移。
+- Pixel Info 同时查询 Raw、Display、RGB 与 Bayer 通道，并在可读缩放级别绘制有界标签和 Bayer mesh。
 
 ## Windows 开发环境
 

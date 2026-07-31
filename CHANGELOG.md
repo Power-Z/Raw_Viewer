@@ -28,3 +28,6 @@
 - 增加 Sensor BLV / Display BLV 分离、Display WLV、Gamma 和恢复图像默认值控制。
 - 增加每文档独立的五步显示参数撤销/重做，并验证历史隔离和预览不修改原始数据。
 - 修正 LibRaw 黑电平语义为基础黑电平与四通道偏移之和；Hasselblad 样本默认值为 4093.5。
+- 增加 Pixel Info 非模态控制窗口、Raw/Display/RGB 开关、Bayer mesh 和 R/Gr/Gb/B 英文字标注。
+- 增加像素标注缩放阈值、可见区域均匀抽样和严格标签上限，并将最大分析缩放提高到 256 倍。
+- 增加 16 ms 状态栏查询与显示预览刷新节流。

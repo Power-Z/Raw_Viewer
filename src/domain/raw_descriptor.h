@@ -25,6 +25,14 @@ enum class BayerPattern {
     GBRG
 };
 
+enum class BayerChannel {
+    None,
+    R,
+    Gr,
+    Gb,
+    B
+};
+
 struct RawDescriptor {
     std::uint64_t width = 0;
     std::uint64_t height = 0;
@@ -52,5 +60,9 @@ DescriptorValidation validateDescriptor(const RawDescriptor& descriptor,
 const char* toString(ScalarType value) noexcept;
 const char* toString(ByteOrder value) noexcept;
 const char* toString(BayerPattern value) noexcept;
+const char* toString(BayerChannel value) noexcept;
+BayerChannel bayerChannelAt(BayerPattern pattern,
+                            std::uint64_t x,
+                            std::uint64_t y) noexcept;
 
 } // namespace rawviewer::domain

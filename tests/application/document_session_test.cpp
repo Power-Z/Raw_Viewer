@@ -1,4 +1,5 @@
 #include "application/document_session.h"
+#include "application/pixel_info.h"
 #include "application/preview_renderer.h"
 
 #include <QTest>
@@ -6,6 +7,21 @@
 #include <memory>
 
 namespace {
+
+class TestPixelSource final : public rawviewer::application::IPixelSource {
+public:
+    std::uint64_t width() const noexcept override { return 3; }
+    std::uint64_t height() const noexcept override { return 1; }
+
+    rawviewer::application::PixelSample sample(
+        std::uint64_t x,
+        std::uint64_t y) const noexcept override {
+        if (y != 0 || x >= width()) {
+            return {};
+        }
+        return {true, static_cast<double>(x * 50)};
+    }
+};
 
 std::shared_ptr<rawviewer::application::DecodedImage> makeImage() {
     auto image = std::make_shared<rawviewer::application::DecodedImage>();
@@ -28,6 +44,7 @@ std::shared_ptr<rawviewer::application::DecodedImage> makeImage() {
     signal->height = 1;
     signal->values = {0.0F, 50.0F, 100.0F};
     image->signalPreview = signal;
+    image->pixels = std::make_shared<TestPixelSource>();
     return image;
 }
 
@@ -50,6 +67,8 @@ private slots:
     void clearsRedoAfterNewEdit();
     void isolatesDocumentHistory();
     void rendersWithoutChangingOriginal();
+    void queriesOriginalProcessedRgbAndBayerValues();
+    void rejectsOutOfBoundsPixelInfo();
 };
 
 void DocumentSessionTest::keepsOnlyFiveUndoOperations() {
@@ -102,6 +121,33 @@ void DocumentSessionTest::rendersWithoutChangingOriginal() {
     QCOMPARE(rendered->preview.rgba[8], std::uint8_t{255});
     QCOMPARE(original->preview.rgba[4], std::uint8_t{128});
     QCOMPARE(rendered->signalPreview.get(), original->signalPreview.get());
+}
+
+void DocumentSessionTest::queriesOriginalProcessedRgbAndBayerValues() {
+    const auto image = makeImage();
+    image->metadata.bayerPattern = rawviewer::domain::BayerPattern::RGGB;
+    rawviewer::domain::DisplayMapping mapping;
+    mapping.blackPoint = 0.0;
+    mapping.whitePoint = 100.0;
+    mapping.gamma = 1.0;
+
+    const auto info = rawviewer::application::queryPixelInfo(
+        *image, mapping, 1, 0);
+    QVERIFY(info.valid);
+    QCOMPARE(info.originalValue, 50.0);
+    QCOMPARE(info.processedValue, 0.5);
+    QVERIFY(info.rgbValid);
+    QCOMPARE(info.red, std::uint8_t{128});
+    QCOMPARE(info.green, std::uint8_t{128});
+    QCOMPARE(info.blue, std::uint8_t{128});
+    QCOMPARE(info.channel, rawviewer::domain::BayerChannel::Gr);
+}
+
+void DocumentSessionTest::rejectsOutOfBoundsPixelInfo() {
+    const auto image = makeImage();
+    const auto info = rawviewer::application::queryPixelInfo(
+        *image, {}, 3, 0);
+    QVERIFY(!info.valid);
 }
 
 QTEST_APPLESS_MAIN(DocumentSessionTest)

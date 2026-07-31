@@ -52,6 +52,7 @@
 - 数组抽查：min=0，max=65535，mean=13032.235；
 - 核验工具：rawpy 0.26.1 / LibRaw 0.22.0；dcraw 9.27 交叉检查。
 - 产品集成复核：Raw Viewer Debug + 官方 LibRaw 0.22.2 Win64，`DecoderTest::verifiesApprovedCameraSampleWhenConfigured` 通过；V0.3 额外断言平均 Sensor BLV 4093.5 与 WLV 65535，并完成显示默认值窗口验收。
+- Pixel Info 复核：状态栏返回 Raw 20307、Display 0.5458、RGB 139/139/139、Gr；5223% 缩放下 RGGB 的 R/Gr/Gb/B 英文字标注与 Bayer mesh 正确显示。
 
 若按用户提供的 11776×8842×16-bit 计算，文件大小差为 3,467,264 bytes；若按 LibRaw 报告的 11904×8842×16-bit 计算，差为 1,203,712 bytes。这些差值包含 TIFF IFD、缩略图、元数据及可能的容器布局开销，均不能当作平面 RAW 的 `headerBytes`。
 

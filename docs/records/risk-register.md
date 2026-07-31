@@ -7,7 +7,7 @@
 | R-001 | 200 MP 整图复制导致内存耗尽 | 5 | 4 | 不可变映射、瓦片、金字塔、有界缓存；峰值基准 | 工作集超过预算或 OOM | Open |
 | R-002 | 32-bit RAW 被错误解释为 UInt32/Float32 | 5 | 2 | UI 独立 scalarType；UInt32/Float32 黄金像素测试 | 同一字节得到完全不同数值 | Mitigated |
 | R-003 | stride/packed 格式未定义导致错行 | 5 | 3 | stride 高级项及测试；首版拒绝 packed；样本清单 | 文件长度正确但画面错位 | Mitigated |
-| R-004 | Bayer pattern 默认值导致通道分析错误 | 4 | 3 | 每文档显式 pattern；状态栏持续显示 | 通道标注与样本基准不符 | Open |
+| R-004 | Bayer pattern 默认值导致通道分析错误 | 4 | 2 | 每文档显式 pattern；状态栏持续显示；四种 2×2 pattern 黄金测试 | 通道标注与样本基准不符 | Mitigated |
 | R-005 | 后台旧任务覆盖新文档 | 4 | 2 | generationId、取消、过期结果丢弃；后续补 UI 压力测试 | 快速切换文件出现旧图/旧统计 | Mitigated |
 | R-006 | Qt 许可选择不符合分发方式 | 5 | 2 | 依赖清单、动态链接策略、发布前法务确认 | 准备对外交付 | Open |
 | R-007 | GPU/远程桌面兼容性不足 | 3 | 3 | CPU 回退；适配器隔离；目标设备测试 | OpenGL 初始化失败 | Open |
@@ -30,3 +30,4 @@
 | 2026-07-31 | Power-Z / Codex | 确认统计方向；增加相机容器、样本容量和 LibRaw 许可风险 |
 | 2026-07-31 | Power-Z / Codex | V0.2 实现端序/stride/32-bit 测试与 generation 保护，降低 R-002/R-003/R-005 概率 |
 | 2026-07-31 | Power-Z / Codex | V0.3 引入文档 revision、不可变预览源和五步历史；增加 LibRaw 黑电平语义回归保护 |
+| 2026-07-31 | Power-Z / Codex | P2-03 覆盖四种 Bayer pattern，并用真实 RGGB 样本完成状态栏与 overlay 验收，降低 R-004 概率 |

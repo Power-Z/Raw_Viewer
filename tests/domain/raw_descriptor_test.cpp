@@ -20,6 +20,7 @@ private slots:
     void rejectsOverflow();
     void validatesDisplayMapping();
     void mapsDisplayRange();
+    void mapsAllBayerPatterns();
 };
 
 void RawDescriptorTest::acceptsTightUInt16() {
@@ -110,6 +111,33 @@ void RawDescriptorTest::mapsDisplayRange() {
     QCOMPARE(rawviewer::domain::mapDisplayValue(600.0, mapping), 0.5);
     QCOMPARE(rawviewer::domain::mapDisplayValue(1100.0, mapping), 1.0);
     QCOMPARE(rawviewer::domain::mapDisplayValue(2000.0, mapping), 1.0);
+}
+
+void RawDescriptorTest::mapsAllBayerPatterns() {
+    using rawviewer::domain::BayerChannel;
+    using rawviewer::domain::BayerPattern;
+    using rawviewer::domain::bayerChannelAt;
+
+    QCOMPARE(bayerChannelAt(BayerPattern::RGGB, 0, 0), BayerChannel::R);
+    QCOMPARE(bayerChannelAt(BayerPattern::RGGB, 1, 0), BayerChannel::Gr);
+    QCOMPARE(bayerChannelAt(BayerPattern::RGGB, 0, 1), BayerChannel::Gb);
+    QCOMPARE(bayerChannelAt(BayerPattern::RGGB, 1, 1), BayerChannel::B);
+
+    QCOMPARE(bayerChannelAt(BayerPattern::BGGR, 0, 0), BayerChannel::B);
+    QCOMPARE(bayerChannelAt(BayerPattern::BGGR, 1, 0), BayerChannel::Gb);
+    QCOMPARE(bayerChannelAt(BayerPattern::BGGR, 0, 1), BayerChannel::Gr);
+    QCOMPARE(bayerChannelAt(BayerPattern::BGGR, 1, 1), BayerChannel::R);
+
+    QCOMPARE(bayerChannelAt(BayerPattern::GRBG, 0, 0), BayerChannel::Gr);
+    QCOMPARE(bayerChannelAt(BayerPattern::GRBG, 1, 0), BayerChannel::R);
+    QCOMPARE(bayerChannelAt(BayerPattern::GRBG, 0, 1), BayerChannel::B);
+    QCOMPARE(bayerChannelAt(BayerPattern::GRBG, 1, 1), BayerChannel::Gb);
+
+    QCOMPARE(bayerChannelAt(BayerPattern::GBRG, 0, 0), BayerChannel::Gb);
+    QCOMPARE(bayerChannelAt(BayerPattern::GBRG, 1, 0), BayerChannel::B);
+    QCOMPARE(bayerChannelAt(BayerPattern::GBRG, 0, 1), BayerChannel::R);
+    QCOMPARE(bayerChannelAt(BayerPattern::GBRG, 1, 1), BayerChannel::Gr);
+    QCOMPARE(bayerChannelAt(BayerPattern::None, 0, 0), BayerChannel::None);
 }
 
 QTEST_APPLESS_MAIN(RawDescriptorTest)

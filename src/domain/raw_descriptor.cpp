@@ -113,4 +113,39 @@ const char* toString(BayerPattern value) noexcept {
     return "Unknown";
 }
 
+const char* toString(BayerChannel value) noexcept {
+    switch (value) {
+    case BayerChannel::None: return "";
+    case BayerChannel::R: return "R";
+    case BayerChannel::Gr: return "Gr";
+    case BayerChannel::Gb: return "Gb";
+    case BayerChannel::B: return "B";
+    }
+    return "";
+}
+
+BayerChannel bayerChannelAt(BayerPattern pattern,
+                            std::uint64_t x,
+                            std::uint64_t y) noexcept {
+    const bool oddX = (x & 1U) != 0;
+    const bool oddY = (y & 1U) != 0;
+    switch (pattern) {
+    case BayerPattern::RGGB:
+        if (!oddY) return oddX ? BayerChannel::Gr : BayerChannel::R;
+        return oddX ? BayerChannel::B : BayerChannel::Gb;
+    case BayerPattern::BGGR:
+        if (!oddY) return oddX ? BayerChannel::Gb : BayerChannel::B;
+        return oddX ? BayerChannel::R : BayerChannel::Gr;
+    case BayerPattern::GRBG:
+        if (!oddY) return oddX ? BayerChannel::R : BayerChannel::Gr;
+        return oddX ? BayerChannel::Gb : BayerChannel::B;
+    case BayerPattern::GBRG:
+        if (!oddY) return oddX ? BayerChannel::B : BayerChannel::Gb;
+        return oddX ? BayerChannel::Gr : BayerChannel::R;
+    case BayerPattern::None:
+        return BayerChannel::None;
+    }
+    return BayerChannel::None;
+}
+
 } // namespace rawviewer::domain

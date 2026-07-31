@@ -1,16 +1,20 @@
 #include "presentation/image_viewport.h"
 
+#include "application/pixel_info.h"
+
 #include <QDragEnterEvent>
 #include <QFileInfo>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QStringList>
 #include <QResizeEvent>
 #include <QUrl>
 #include <QWheelEvent>
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace rawviewer::presentation {
 
@@ -70,6 +74,18 @@ void ImageViewport::fitToWindow() {
     update();
 }
 
+void ImageViewport::setDisplayMapping(
+    const domain::DisplayMapping& mapping) {
+    displayMapping_ = mapping;
+    update();
+}
+
+void ImageViewport::setPixelOverlayOptions(
+    const PixelOverlayOptions& options) {
+    overlayOptions_ = options;
+    update();
+}
+
 void ImageViewport::paintEvent(QPaintEvent*) {
     QPainter painter(this);
     painter.fillRect(rect(), palette().color(QPalette::Base).darker(135));
@@ -89,6 +105,139 @@ void ImageViewport::paintEvent(QPaintEvent*) {
     painter.drawImage(target, preview_);
     painter.setPen(palette().color(QPalette::Mid));
     painter.drawRect(target);
+    drawPixelOverlay(painter);
+}
+
+void ImageViewport::drawPixelOverlay(QPainter& painter) {
+    if (!overlayOptions_.enabled || !image_ || !image_->pixels ||
+        zoom_ < overlayOptions_.minimumCellPixels) {
+        return;
+    }
+
+    const auto imageWidth = static_cast<qint64>(image_->metadata.width);
+    const auto imageHeight = static_cast<qint64>(image_->metadata.height);
+    const qint64 left = std::clamp<qint64>(
+        static_cast<qint64>(std::floor((-offset_.x()) / zoom_)),
+        0,
+        imageWidth);
+    const qint64 top = std::clamp<qint64>(
+        static_cast<qint64>(std::floor((-offset_.y()) / zoom_)),
+        0,
+        imageHeight);
+    const qint64 right = std::clamp<qint64>(
+        static_cast<qint64>(std::ceil((width() - offset_.x()) / zoom_)),
+        0,
+        imageWidth);
+    const qint64 bottom = std::clamp<qint64>(
+        static_cast<qint64>(std::ceil((height() - offset_.y()) / zoom_)),
+        0,
+        imageHeight);
+    if (right <= left || bottom <= top) {
+        return;
+    }
+
+    painter.save();
+    painter.setClipRect(rect());
+    if (overlayOptions_.showMesh) {
+        QPen gridPen(palette().color(QPalette::Highlight));
+        gridPen.setCosmetic(true);
+        gridPen.setColor(QColor(gridPen.color().red(),
+                                gridPen.color().green(),
+                                gridPen.color().blue(),
+                                150));
+        painter.setPen(gridPen);
+        for (qint64 x = left; x <= right; ++x) {
+            const double screenX = offset_.x() + x * zoom_;
+            painter.drawLine(QPointF(screenX, offset_.y() + top * zoom_),
+                             QPointF(screenX, offset_.y() + bottom * zoom_));
+        }
+        for (qint64 y = top; y <= bottom; ++y) {
+            const double screenY = offset_.y() + y * zoom_;
+            painter.drawLine(QPointF(offset_.x() + left * zoom_, screenY),
+                             QPointF(offset_.x() + right * zoom_, screenY));
+        }
+    }
+
+    auto channelColor = [](domain::BayerChannel channel) {
+        switch (channel) {
+        case domain::BayerChannel::R: return QColor(255, 105, 105);
+        case domain::BayerChannel::Gr:
+        case domain::BayerChannel::Gb: return QColor(120, 235, 135);
+        case domain::BayerChannel::B: return QColor(120, 170, 255);
+        case domain::BayerChannel::None: return QColor(245, 245, 245);
+        }
+        return QColor(245, 245, 245);
+    };
+
+    std::uint64_t cellIndex = 0;
+    const auto totalCells = static_cast<std::uint64_t>(right - left) *
+                            static_cast<std::uint64_t>(bottom - top);
+    const auto labelLimit = static_cast<std::uint64_t>(
+        overlayOptions_.maximumLabels);
+    const QFontMetrics metrics(painter.font());
+    for (qint64 y = top; y < bottom; ++y) {
+        for (qint64 x = left; x < right; ++x, ++cellIndex) {
+            if (totalCells > labelLimit) {
+                const auto slot = cellIndex * labelLimit / totalCells;
+                const auto previousSlot = cellIndex == 0
+                    ? std::numeric_limits<std::uint64_t>::max()
+                    : (cellIndex - 1) * labelLimit / totalCells;
+                if (slot == previousSlot) {
+                    continue;
+                }
+            }
+            const auto info = application::queryPixelInfo(
+                *image_,
+                displayMapping_,
+                static_cast<std::uint64_t>(x),
+                static_cast<std::uint64_t>(y));
+            if (!info.valid) {
+                continue;
+            }
+            QStringList lines;
+            if (overlayOptions_.showBayerLabel &&
+                info.channel != domain::BayerChannel::None) {
+                lines << QString::fromLatin1(domain::toString(info.channel));
+            }
+            if (overlayOptions_.showOriginal) {
+                lines << tr("Raw %1").arg(info.originalValue, 0, 'g', 8);
+            }
+            if (overlayOptions_.showProcessed) {
+                lines << tr("Display %1").arg(info.processedValue, 0, 'f', 4);
+            }
+            if (overlayOptions_.showRgb && info.rgbValid) {
+                lines << tr("RGB %1,%2,%3")
+                             .arg(info.red)
+                             .arg(info.green)
+                             .arg(info.blue);
+            }
+            if (lines.isEmpty()) {
+                continue;
+            }
+
+            QRectF cell(offset_.x() + x * zoom_,
+                        offset_.y() + y * zoom_,
+                        zoom_,
+                        zoom_);
+            const QString text = lines.join('\n');
+            QRect textBounds = metrics.boundingRect(
+                QRect(0, 0,
+                      std::max(1, static_cast<int>(cell.width() - 6.0)),
+                      std::max(1, static_cast<int>(cell.height() - 4.0))),
+                Qt::AlignCenter | Qt::TextWordWrap,
+                text);
+            QRectF background(cell.center().x() - textBounds.width() / 2.0 - 3.0,
+                              cell.center().y() - textBounds.height() / 2.0 - 2.0,
+                              textBounds.width() + 6.0,
+                              textBounds.height() + 4.0);
+            painter.fillRect(background, QColor(0, 0, 0, 155));
+            painter.setPen(channelColor(info.channel));
+            painter.drawText(cell.adjusted(3.0, 2.0, -3.0, -2.0),
+                             Qt::AlignCenter | Qt::TextWordWrap,
+                             text);
+        }
+    }
+    painter.restore();
 }
 
 void ImageViewport::resizeEvent(QResizeEvent* event) {
@@ -131,7 +280,7 @@ void ImageViewport::wheelEvent(QWheelEvent* event) {
     const QPointF anchor = event->position();
     const QPointF sourceAnchor = imageCoordinate(anchor);
     const double factor = std::pow(1.0015, event->angleDelta().y());
-    zoom_ = std::clamp(zoom_ * factor, 0.0001, 64.0);
+    zoom_ = std::clamp(zoom_ * factor, 0.0001, 256.0);
     offset_ = anchor - sourceAnchor * zoom_;
     fitMode_ = false;
     emit zoomChanged(zoom_);

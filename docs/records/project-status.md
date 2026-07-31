@@ -25,11 +25,13 @@
 - 建立不可变原始信号、DisplayMapping 与文档 revision；
 - 完成 Sensor BLV / Display BLV 分离、Display WLV、Gamma 和默认值复位；
 - 完成每文档独立、最多五个逻辑操作的参数撤销/重做。
+- 完成 P2-03 Pixel Info：Raw/Display/RGB 查询、四种 Bayer pattern、mesh、缩放阈值与标签上限；
+- 状态栏像素查询和显示预览更新均限制为约 60 Hz。
 
 ## 当前进行
 
-- 实施 P2-03 Pixel Info、P2-04 Bayer Extract、P2-05 ROI Statistics 和 P2-06 双图对比；
-- 为显示参数连续编辑增加节流，并为后续瓦片缓存接入完整 revision 键；
+- 实施 P2-04 Bayer Extract、P2-05 ROI Statistics 和 P2-06 双图对比；
+- 为后续瓦片缓存接入完整 revision 键；
 - 补齐普通 JPG/PNG/BMP 黄金样本和更多 UI 自动化测试；
 - V0.4 前再准备至少 200 MP / 400 MB 的合法性能样本。
 
@@ -78,3 +80,4 @@ V0.3：完成像素信息、Bayer 提取、ROI 基础统计与双图对比闭环
 | 2026-07-31 | V0.2 Debug | MSVC 19.30 + Qt 6.8.3 + LibRaw 0.22.2 编译成功；CTest 2/2 通过 |
 | 2026-07-31 | 产品 LibRaw + `CAMERA-HB-X2D-001` | 11904×8842 UInt16 RGGB、Hasselblad X2D 100C 集成测试通过；8 项测试通过 |
 | 2026-07-31 | V0.3 第一批 Debug/Release + UI | 两种配置 CTest 均 3/3 通过；BLV/WLV/Gamma、真实样本默认值、撤销与重做窗口验收通过 |
+| 2026-07-31 | V0.3 Pixel Info Debug/Release + UI | 四种 Bayer pattern 与 RGB 黄金测试通过；真实样本 Raw/Display/RGB 状态栏及 5223% mesh/标签窗口验收通过 |

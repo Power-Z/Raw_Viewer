@@ -1,7 +1,11 @@
 #include "infrastructure/camera_raw_decoder.h"
 #include "infrastructure/flat_raw_decoder.h"
+#include "infrastructure/qt_image_decoder.h"
+
+#include "application/pixel_info.h"
 
 #include <QFile>
+#include <QImage>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -41,6 +45,7 @@ private slots:
     void decodesFloat32();
     void refusesTruncatedFile();
     void cameraContainerWinsBySignature();
+    void preservesStandardImageRgbForPixelInfo();
     void verifiesApprovedCameraSampleWhenConfigured();
 };
 
@@ -174,6 +179,31 @@ void DecoderTest::cameraContainerWinsBySignature() {
              rawviewer::application::ProbeStrength::Definitive);
     QCOMPARE(flat.probe(path, signature, true),
              rawviewer::application::ProbeStrength::Fallback);
+}
+
+void DecoderTest::preservesStandardImageRgbForPixelInfo() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath("rgb.png");
+    QImage source(1, 1, QImage::Format_RGBA8888);
+    source.fill(QColor(10, 20, 30));
+    QVERIFY(source.save(path));
+
+    rawviewer::application::OpenImageRequest request;
+    request.path = nativePath(path);
+    request.cancellation = std::make_shared<std::atomic_bool>(false);
+    rawviewer::infrastructure::QtImageDecoder decoder;
+    const auto result = decoder.decode(request);
+    QVERIFY2(result.succeeded(), result.message.c_str());
+
+    rawviewer::domain::DisplayMapping mapping;
+    const auto info = rawviewer::application::queryPixelInfo(
+        *result.image, mapping, 0, 0);
+    QVERIFY(info.valid);
+    QVERIFY(info.rgbValid);
+    QCOMPARE(info.red, std::uint8_t{10});
+    QCOMPARE(info.green, std::uint8_t{20});
+    QCOMPARE(info.blue, std::uint8_t{30});
 }
 
 void DecoderTest::verifiesApprovedCameraSampleWhenConfigured() {
