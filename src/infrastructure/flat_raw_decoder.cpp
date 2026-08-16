@@ -11,6 +11,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <new>
 
 namespace rawviewer::infrastructure {
 namespace {
@@ -182,6 +183,104 @@ application::DecodeResult FlatRawDecoder::decode(
         mapping,
         *request.flatRawDescriptor,
         validation);
+
+    auto decoded = std::make_shared<application::DecodedImage>();
+    decoded->metadata.kind = application::ImageKind::FlatRaw;
+    decoded->metadata.width = pixels->width();
+    decoded->metadata.height = pixels->height();
+    decoded->metadata.scalarType = request.flatRawDescriptor->scalarType;
+    decoded->metadata.bayerPattern = request.flatRawDescriptor->bayerPattern;
+    decoded->metadata.format = "Flat RAW";
+    decoded->metadata.details =
+        std::string(domain::toString(request.flatRawDescriptor->byteOrder));
+    decoded->metadata.sensorBlackLevel =
+        request.flatRawDescriptor->sensorBlackLevel;
+    decoded->metadata.whiteLevel =
+        integerMaximum(request.flatRawDescriptor->scalarType);
+    decoded->pixels = pixels;
+
+    if (request.flatRawDescriptor->scalarType == domain::ScalarType::UInt16) {
+        if (pixels->width() > static_cast<std::uint64_t>(
+                                  std::numeric_limits<int>::max()) ||
+            pixels->height() > static_cast<std::uint64_t>(
+                                   std::numeric_limits<int>::max())) {
+            return {nullptr,
+                    "raw.display_dimensions_too_large",
+                    "The UInt16 RAW dimensions exceed the grayscale display limit."};
+        }
+        const auto width = static_cast<std::size_t>(pixels->width());
+        const auto height = static_cast<std::size_t>(pixels->height());
+        const auto strideSamples = (width + 1U) & ~std::size_t{1};
+        if (height != 0 &&
+            strideSamples > std::numeric_limits<std::size_t>::max() / height) {
+            return {nullptr,
+                    "raw.display_size_overflow",
+                    "The UInt16 grayscale display size overflows memory limits."};
+        }
+        const bool sourceIsNativeEndian =
+            (std::endian::native == std::endian::little &&
+             request.flatRawDescriptor->byteOrder ==
+                 domain::ByteOrder::LittleEndian) ||
+            (std::endian::native == std::endian::big &&
+             request.flatRawDescriptor->byteOrder ==
+                 domain::ByteOrder::BigEndian);
+        const bool canUseMappedGrayscale =
+            sourceIsNativeEndian &&
+            request.flatRawDescriptor->headerBytes % alignof(std::uint32_t) == 0 &&
+            validation.effectiveRowStride % alignof(std::uint32_t) == 0 &&
+            validation.effectiveRowStride / sizeof(std::uint16_t) <=
+                static_cast<std::uint64_t>(std::numeric_limits<int>::max());
+        decoded->preview.width = static_cast<int>(width);
+        decoded->preview.height = static_cast<int>(height);
+        if (canUseMappedGrayscale) {
+            decoded->preview.grayscale16Pixels =
+                reinterpret_cast<const std::uint16_t*>(
+                    mapping + request.flatRawDescriptor->headerBytes);
+            decoded->preview.grayscale16StrideSamples = static_cast<int>(
+                validation.effectiveRowStride / sizeof(std::uint16_t));
+            decoded->metadata.details += ", zero-copy direct Grayscale16";
+            return {decoded, {}, {}};
+        }
+
+        auto grayscale = std::make_shared<std::vector<std::uint16_t>>();
+        try {
+            grayscale->resize(strideSamples * height);
+        } catch (const std::bad_alloc&) {
+            return {nullptr,
+                    "raw.display_allocation_failed",
+                    "There is not enough memory for the full UInt16 grayscale image."};
+        }
+        const auto rowBytes = width * sizeof(std::uint16_t);
+        for (std::size_t y = 0; y < height; ++y) {
+            if (request.cancellation && request.cancellation->load()) {
+                return {nullptr,
+                        "task.cancelled",
+                        "The open operation was cancelled."};
+            }
+            const auto* sourceRow =
+                mapping + request.flatRawDescriptor->headerBytes +
+                y * validation.effectiveRowStride;
+            auto* destinationRow = grayscale->data() + y * strideSamples;
+            if (sourceIsNativeEndian) {
+                std::memcpy(destinationRow, sourceRow, rowBytes);
+            } else {
+                for (std::size_t x = 0; x < width; ++x) {
+                    destinationRow[x] = readU16(
+                        sourceRow + x * sizeof(std::uint16_t),
+                        request.flatRawDescriptor->byteOrder);
+                }
+            }
+        }
+
+        decoded->preview.grayscale16Storage = std::move(grayscale);
+        decoded->preview.grayscale16Pixels =
+            decoded->preview.grayscale16Storage->data();
+        decoded->preview.grayscale16StrideSamples =
+            static_cast<int>(strideSamples);
+        decoded->metadata.details += ", converted direct Grayscale16";
+        return {decoded, {}, {}};
+    }
+
     const auto [previewWidth, previewHeight] =
         previewSize(pixels->width(), pixels->height());
 
@@ -209,19 +308,7 @@ application::DecodeResult FlatRawDecoder::decode(
         }
     }
 
-    auto decoded = std::make_shared<application::DecodedImage>();
-    decoded->metadata.kind = application::ImageKind::FlatRaw;
-    decoded->metadata.width = pixels->width();
-    decoded->metadata.height = pixels->height();
-    decoded->metadata.scalarType = request.flatRawDescriptor->scalarType;
-    decoded->metadata.bayerPattern = request.flatRawDescriptor->bayerPattern;
-    decoded->metadata.format = "Flat RAW";
-    decoded->metadata.details =
-        std::string(domain::toString(request.flatRawDescriptor->byteOrder));
-    decoded->metadata.sensorBlackLevel =
-        request.flatRawDescriptor->sensorBlackLevel;
     decoded->metadata.whiteLevel = maximum;
-    decoded->pixels = pixels;
     decoded->preview.width = previewWidth;
     decoded->preview.height = previewHeight;
     decoded->preview.rgba.resize(

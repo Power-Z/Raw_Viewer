@@ -31,6 +31,14 @@ struct DisplayImage {
     int width = 0;
     int height = 0;
     std::vector<std::uint8_t> rgba;
+    const std::uint16_t* grayscale16Pixels = nullptr;
+    std::shared_ptr<const std::vector<std::uint16_t>> grayscale16Storage;
+    int grayscale16StrideSamples = 0;
+
+    bool hasGrayscale16() const noexcept {
+        return grayscale16Pixels != nullptr &&
+               grayscale16StrideSamples >= width;
+    }
 };
 
 struct SignalPreview {

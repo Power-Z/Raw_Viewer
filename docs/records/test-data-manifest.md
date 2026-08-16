@@ -32,6 +32,7 @@
 | ID | 受控位置标识 | 文件大小 | RAW 参数 | SHA-256 | 来源与授权 | 用途 | 负责人 |
 |---|---|---:|---|---|---|---|---|
 | CAMERA-HB-X2D-001 | `Data/Test_data/B0012535.B0011072.3FR`（本地，不入 Git） | 211,714,048 bytes | TIFF 相机 RAW；11904×8842 UInt16；RGGB | `3708AF7CBA70EC5A3523DBF969943987A2FBCE2C5B17AE80CFF0414D81F16CFF` | 用户允许本项目测试；未确认再分发 | LibRaw 集成、约 100 MP 基准 | Power-Z |
+| FLAT-HB-X2D-001 | `Data/Test_data/B0012535.B0011072.raw`（本地，不入 Git） | 210,510,336 bytes | V0.2.1 显示参数：11776×8842 UInt16 LE；skip=0；tight stride；尾部 2,263,552 bytes 不显示 | `6D49DA165FEF9D07DB3D39AF768CD32FF10F5D739C587061079B288961B22449` | 由 CAMERA-HB-X2D-001 的 LibRaw 数组原序导出；授权同源 | 平面 RAW 顺序加载与灰度显示验收 | Power-Z |
 | PERF-200MP-001 | 延期准备 | 至少约 400 MB | 至少 200 MP | 待填写 | 待填写 | V0.4 容量与性能验收；不阻塞 V0.2 | 待填写 |
 
 > “受控位置标识”只写存储系统中的非敏感 ID，不记录密码、令牌或可公开访问链接。
@@ -56,6 +57,8 @@
 - 产品集成复核：Raw Viewer Debug + 官方 LibRaw 0.22.2 Win64，`DecoderTest::verifiesApprovedCameraSampleWhenConfigured` 通过；V0.3 额外断言平均 Sensor BLV 4093.5 与 WLV 65535，并完成显示默认值窗口验收。
 - Pixel Info 复核：状态栏返回 Raw 20307、Display 0.5458、RGB 139/139/139、Gr；5223% 缩放下 RGGB 的 R/Gr/Gb/B 英文字标注与 Bayer mesh 正确显示。
 - Bayer Extract 复核：完整 RGGB 源的 R 为 5952×4421、origin (0,0)，B 为 5952×4421、origin (1,1)；状态栏通道坐标到源坐标按 2×2 步长映射，恢复原图后尺寸与 RGGB 元数据正确。
+- 平面 RAW 复核：`FLAT-HB-X2D-001` 按 V0.2.1 指定的 11776×8842 解释，依次消费前 208,246,784 bytes，超出 W×H 的 2,263,552 bytes 不显示；完整 Grayscale16 的索引 0、1、11776 与原文件相应 UInt16 一致，不再生成 2048 宽抽样预览。
+- Pixel Statistics 复核：`FLAT-HB-X2D-001` 的 104,123,392 个 UInt16 样本全部参与 Status 统计，count=104123392、min=0、max=65535、mean=13043.657121994258、population std=11863.858747775810；256-bin 直方图计数总和等于 count。最终 Release decoder test（含打开与统计）为 1.56 s。
 
 若按用户提供的 11776×8842×16-bit 计算，文件大小差为 3,467,264 bytes；若按 LibRaw 报告的 11904×8842×16-bit 计算，差为 1,203,712 bytes。这些差值包含 TIFF IFD、缩略图、元数据及可能的容器布局开销，均不能当作平面 RAW 的 `headerBytes`。
 

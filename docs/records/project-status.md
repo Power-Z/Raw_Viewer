@@ -29,10 +29,11 @@
 - 状态栏像素查询和显示预览更新均限制为约 60 Hz。
 - 完成 P2-04 Bayer Extract：R/Gr/Gb/B、源 ROI、坐标互转、单通道显示和 CSV 导出接口；
 - 单通道使用只读 2×2 像素源视图，不复制四分之一幅完整通道数据。
+- 完成 P2-05 Pixel Statistics：Status、Horizontal Box、Vertical Box、Line、WB 预留、两次点击选择、Bayer 分通道、后台进度/取消和有界图表。
 
 ## 当前进行
 
-- 实施 P2-05 ROI Statistics 和 P2-06 双图对比；
+- 实施 P2-06 双图对比；
 - 为后续瓦片缓存接入完整 revision 键；
 - 补齐普通 JPG/PNG/BMP 黄金样本和更多 UI 自动化测试；
 - V0.4 前再准备至少 200 MP / 400 MB 的合法性能样本。
@@ -84,3 +85,6 @@ V0.3：完成像素信息、Bayer 提取、ROI 基础统计与双图对比闭环
 | 2026-07-31 | V0.3 第一批 Debug/Release + UI | 两种配置 CTest 均 3/3 通过；BLV/WLV/Gamma、真实样本默认值、撤销与重做窗口验收通过 |
 | 2026-07-31 | V0.3 Pixel Info Debug/Release + UI | 四种 Bayer pattern 与 RGB 黄金测试通过；真实样本 Raw/Display/RGB 状态栏及 5223% mesh/标签窗口验收通过 |
 | 2026-08-01 | V0.3 Bayer Extract Debug/Release + UI | 两种配置 CTest 均 3/3；奇数尺寸、ROI、坐标和 CSV 黄金测试通过；11904×8842 RGGB 实图 R/B 通道尺寸、起点、源坐标与原图恢复验收通过 |
+| 2026-08-16 | V0.2.1 RAW 显示修正 | Debug/Release CTest 3/3；按 11776×8842 UInt16 小端从 skip 后顺序展开为完整 Grayscale16，禁用 2048 抽样、RGB 着色和平滑插值，像素标签返回原始 UInt16；保留非阻塞加载动画 |
+| 2026-08-16 | V0.3 Pixel Statistics | Debug/Release CTest 4/4；Status/Horizontal/Vertical/Line 黄金值、Bayer 分通道、取消、两次点击和 1:2:5 UI 测试通过；11776×8842 实际 RAW 全部 104,123,392 像素统计与 NumPy 黄金值一致，最终 Release decoder test 1.56 s |
+| 2026-08-16 | `v0.3.0-preview.1` 发布 | Windows x64 便携包包含 Qt 6.8.3、LibRaw 0.22.2、MSVC CRT、许可证与 SHA-256；包内依赖加载和启动冒烟测试通过，以 GitHub prerelease 发布 |

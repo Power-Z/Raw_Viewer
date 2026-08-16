@@ -4,6 +4,7 @@
 #include "presentation/histogram_widget.h"
 #include "presentation/image_viewport.h"
 #include "presentation/pixel_info_dialog.h"
+#include "presentation/pixel_statistics_dialog.h"
 #include "presentation/theme_manager.h"
 
 #include "application/pixel_info.h"
@@ -63,6 +64,7 @@ MainWindow::MainWindow(
     resize(1440, 900);
     pixelInfoDialog_ = new PixelInfoDialog(this);
     bayerExtractDialog_ = new BayerExtractDialog(this);
+    pixelStatisticsDialog_ = new PixelStatisticsDialog(this);
     createMenus();
     createStatusBar();
 
@@ -84,6 +86,20 @@ MainWindow::MainWindow(
     connect(viewport_, &ImageViewport::zoomChanged, this, [this](double zoom) {
         zoomLabel_->setText(tr("缩放 %1%").arg(zoom * 100.0, 0, 'f', 1));
     });
+    connect(viewport_,
+            &ImageViewport::statisticsSelectionCompleted,
+            this,
+            [this](qint64 x0, qint64 y0, qint64 x1, qint64 y1, bool) {
+        if (x0 < 0 || y0 < 0 || x1 < 0 || y1 < 0) {
+            return;
+        }
+        beginPixelStatistics({
+            static_cast<std::uint64_t>(x0),
+            static_cast<std::uint64_t>(y0),
+            static_cast<std::uint64_t>(x1),
+            static_cast<std::uint64_t>(y1)
+        });
+    });
     connect(pixelInfoDialog_,
             &PixelInfoDialog::optionsChanged,
             viewport_,
@@ -100,6 +116,29 @@ MainWindow::MainWindow(
             &BayerExtractDialog::exportRequested,
             this,
             &MainWindow::exportBayerCsv);
+    connect(pixelStatisticsDialog_,
+            &PixelStatisticsDialog::modeChanged,
+            this,
+            &MainWindow::setStatisticsMode);
+    connect(pixelStatisticsDialog_,
+            &PixelStatisticsDialog::optionsChanged,
+            this,
+            [this] {
+        if (statisticsSelection_) {
+            beginPixelStatistics(*statisticsSelection_);
+        }
+    });
+    connect(pixelStatisticsDialog_,
+            &PixelStatisticsDialog::cancelRequested,
+            this,
+            &MainWindow::cancelPixelStatistics);
+    connect(pixelStatisticsDialog_,
+            &PixelStatisticsDialog::toolClosed,
+            this,
+            [this] {
+        cancelPixelStatistics();
+        viewport_->setStatisticsSelectionTool(StatisticsSelectionTool::None);
+    });
     coordinateTimer_ = new QTimer(this);
     coordinateTimer_->setSingleShot(true);
     coordinateTimer_->setInterval(16);
@@ -126,6 +165,9 @@ MainWindow::~MainWindow() {
     if (exportCancellation_) {
         exportCancellation_->store(true);
     }
+    if (statisticsCancellation_) {
+        statisticsCancellation_->store(true);
+    }
 }
 
 void MainWindow::createMenus() {
@@ -137,7 +179,7 @@ void MainWindow::createMenus() {
             this,
             tr("打开图像"),
             pathEdit_ ? pathEdit_->text() : QDir::homePath(),
-            tr("图像 (*.raw *.RAW *.bin *.jpg *.jpeg *.png *.bmp *.3fr *.dng);;所有文件 (*)"));
+            tr("图像 (*.raw *.RAW *.bin *.BIN *.jpg *.jpeg *.png *.bmp *.3fr *.dng);;所有文件 (*)"));
         if (!path.isEmpty()) {
             openPath(path);
         }
@@ -188,8 +230,10 @@ void MainWindow::createMenus() {
     pixelInfoAction_->setEnabled(false);
     connect(pixelInfoAction_, &QAction::triggered,
             this, &MainWindow::openPixelInfo);
-    auto* statisticsAction = toolMenu->addAction(tr("Pixel Statistics（V0.3）"));
-    statisticsAction->setEnabled(false);
+    statisticsAction_ = toolMenu->addAction(tr("Pixel Statistics"));
+    statisticsAction_->setEnabled(false);
+    connect(statisticsAction_, &QAction::triggered,
+            this, &MainWindow::openPixelStatistics);
     bayerExtractAction_ = toolMenu->addAction(tr("Bayer Extract"));
     bayerExtractAction_->setEnabled(false);
     connect(bayerExtractAction_, &QAction::triggered,
@@ -200,8 +244,8 @@ void MainWindow::createMenus() {
         QMessageBox::about(
             this,
             tr("关于 Raw Viewer"),
-            tr("<b>Raw Viewer 0.3.0-dev</b><br>"
-               "第二阶段：非破坏显示处理、Pixel Info 与 Bayer Extract。<br>"
+            tr("<b>Raw Viewer 0.3.0-preview.1</b><br>"
+               "第二阶段：非破坏显示处理、Pixel Info、Bayer Extract 与 Pixel Statistics。<br>"
                "输入文件和原始像素始终保持只读。"));
     });
 }
@@ -260,7 +304,7 @@ QWidget* MainWindow::createRawParametersPanel() {
 
     form->addRow(tr("Width"), widthSpin_);
     form->addRow(tr("Height"), heightSpin_);
-    form->addRow(tr("Header bytes"), headerSpin_);
+    form->addRow(tr("Skip bytes"), headerSpin_);
     form->addRow(tr("Row stride"), strideSpin_);
     form->addRow(tr("Scalar"), scalarCombo_);
     form->addRow(tr("Byte order"), endianCombo_);
@@ -403,13 +447,14 @@ QWidget* MainWindow::createRightPanel() {
     connect(bayerExtractButton_, &QPushButton::clicked,
             this, &MainWindow::openBayerExtract);
     toolLayout->addWidget(bayerExtractButton_);
-    for (const QString& name : {
-             "Pixel Statistics — V0.3",
-             "ISP tools — reserved"}) {
-        auto* button = new QPushButton(name, tools);
-        button->setEnabled(false);
-        toolLayout->addWidget(button);
-    }
+    statisticsButton_ = new QPushButton(tr("Pixel Statistics"), tools);
+    statisticsButton_->setEnabled(false);
+    connect(statisticsButton_, &QPushButton::clicked,
+            this, &MainWindow::openPixelStatistics);
+    toolLayout->addWidget(statisticsButton_);
+    auto* reserved = new QPushButton(tr("ISP tools — reserved"), tools);
+    reserved->setEnabled(false);
+    toolLayout->addWidget(reserved);
     toolLayout->addStretch();
     layout->addWidget(tools, 1);
     return panel;
@@ -467,11 +512,17 @@ void MainWindow::beginOpen(const QString& path) {
         exportCancellation_->store(true);
         exportCancellation_.reset();
     }
+    cancelPixelStatistics();
+    statisticsSelection_.reset();
+    viewport_->setStatisticsSelectionTool(StatisticsSelectionTool::None);
     ++bayerGeneration_;
     cancellation_ = std::make_shared<std::atomic_bool>(false);
     const auto token = cancellation_;
     const auto generation = ++generation_;
     taskLabel_->setText(tr("正在打开…"));
+    viewport_->setLoading(
+        true,
+        tr("正在加载 %1…").arg(QFileInfo(path).fileName()));
     statusBar()->showMessage(QDir::toNativeSeparators(path));
 
     application::OpenImageRequest request;
@@ -487,6 +538,7 @@ void MainWindow::beginOpen(const QString& path) {
         if (generation != generation_) {
             return;
         }
+        viewport_->setLoading(false);
         if (!result.succeeded()) {
             taskLabel_->setText(tr("打开失败"));
             QMessageBox::critical(
@@ -518,6 +570,7 @@ void MainWindow::showDecoded(
     displaySource_ = documentSession_->original();
     bayerExtractDialog_->setResult(nullptr);
     bayerExtractDialog_->setSource(&displaySource_->metadata);
+    pixelStatisticsDialog_->setSource(&displaySource_->metadata);
     pendingCoordinateInside_ = false;
     coordinateLabel_->setText(tr("坐标 —"));
     syncDisplayControls();
@@ -530,6 +583,8 @@ void MainWindow::showDecoded(
         displaySource_->metadata.bayerPattern != domain::BayerPattern::None;
     bayerExtractAction_->setEnabled(supportsBayer);
     bayerExtractButton_->setEnabled(supportsBayer);
+    statisticsAction_->setEnabled(supportsBayer);
+    statisticsButton_->setEnabled(supportsBayer);
     imageLabel_->setText(metadataSummary(currentImage_->metadata));
     setWindowTitle(QStringLiteral("%1 — Raw Viewer")
                        .arg(QString::fromStdString(currentImage_->metadata.camera)
@@ -579,10 +634,12 @@ void MainWindow::syncDisplayControls() {
     blackPointSpin_->setValue(mapping.blackPoint);
     whitePointSpin_->setValue(mapping.whitePoint);
     gammaSpin_->setValue(mapping.gamma);
-    blackPointSpin_->setEnabled(true);
-    whitePointSpin_->setEnabled(true);
-    gammaSpin_->setEnabled(true);
-    resetDisplayButton_->setEnabled(true);
+    const bool directGrayscale =
+        documentSession_->original()->preview.hasGrayscale16();
+    blackPointSpin_->setEnabled(!directGrayscale);
+    whitePointSpin_->setEnabled(!directGrayscale);
+    gammaSpin_->setEnabled(!directGrayscale);
+    resetDisplayButton_->setEnabled(!directGrayscale);
 }
 
 void MainWindow::renderCurrentDisplay(bool preserveView) {
@@ -666,6 +723,14 @@ void MainWindow::flushCoordinateUpdate() {
             return;
         }
     }
+    if (displaySource_->metadata.kind == application::ImageKind::FlatRaw) {
+        coordinateLabel_->setText(
+            tr("坐标 %1, %2 | Raw %3")
+                .arg(pendingCoordinateX_)
+                .arg(pendingCoordinateY_)
+                .arg(info.originalValue, 0, 'g', 10));
+        return;
+    }
     QString channel;
     if (info.channel != domain::BayerChannel::None) {
         channel = tr(" | %1").arg(
@@ -704,10 +769,128 @@ void MainWindow::openBayerExtract() {
     bayerExtractDialog_->activateWindow();
 }
 
+void MainWindow::openPixelStatistics() {
+    if (!documentSession_) {
+        return;
+    }
+    const auto& metadata = documentSession_->original()->metadata;
+    if (metadata.kind == application::ImageKind::Standard ||
+        metadata.bayerPattern == domain::BayerPattern::None) {
+        return;
+    }
+    if (displaySource_.get() != documentSession_->original().get()) {
+        showOriginalImage();
+    }
+    setStatisticsMode(pixelStatisticsDialog_->mode());
+    pixelStatisticsDialog_->show();
+    pixelStatisticsDialog_->raise();
+    pixelStatisticsDialog_->activateWindow();
+}
+
+void MainWindow::setStatisticsMode(
+    application::PixelStatisticsMode mode) {
+    cancelPixelStatistics();
+    statisticsSelection_.reset();
+    viewport_->clearStatisticsSelection();
+    switch (mode) {
+    case application::PixelStatisticsMode::Status:
+    case application::PixelStatisticsMode::HorizontalBox:
+    case application::PixelStatisticsMode::VerticalBox:
+        viewport_->setStatisticsSelectionTool(
+            StatisticsSelectionTool::Rectangle);
+        break;
+    case application::PixelStatisticsMode::Line:
+        viewport_->setStatisticsSelectionTool(StatisticsSelectionTool::Line);
+        break;
+    case application::PixelStatisticsMode::WhiteBalance:
+        viewport_->setStatisticsSelectionTool(StatisticsSelectionTool::None);
+        break;
+    }
+}
+
+void MainWindow::beginPixelStatistics(
+    const application::StatisticsSelection& selection) {
+    if (!documentSession_ ||
+        pixelStatisticsDialog_->mode() ==
+            application::PixelStatisticsMode::WhiteBalance) {
+        return;
+    }
+    if (statisticsCancellation_) {
+        statisticsCancellation_->store(true, std::memory_order_relaxed);
+    }
+    statisticsCancellation_ = std::make_shared<std::atomic_bool>(false);
+    statisticsProgress_ = std::make_shared<std::atomic_uint32_t>(0);
+    statisticsSelection_ = selection;
+    const auto token = statisticsCancellation_;
+    const auto progress = statisticsProgress_;
+    const auto generation = ++statisticsGeneration_;
+
+    application::PixelStatisticsRequest request;
+    request.source = documentSession_->original();
+    request.mode = pixelStatisticsDialog_->mode();
+    request.selection = selection;
+    request.channel = pixelStatisticsDialog_->channel();
+    request.histogramBins = pixelStatisticsDialog_->histogramBins();
+    request.cancellation = token;
+    request.progressPermille = progress;
+    pixelStatisticsDialog_->setSelection(selection);
+    pixelStatisticsDialog_->setBusy(true, progress);
+    taskLabel_->setText(tr("正在统计原始 Bayer 像素…"));
+
+    auto* watcher =
+        new QFutureWatcher<application::PixelStatisticsResult>(this);
+    connect(watcher,
+            &QFutureWatcher<application::PixelStatisticsResult>::finished,
+            this,
+            [this, watcher, generation, token] {
+        const auto result = watcher->result();
+        watcher->deleteLater();
+        if (generation != statisticsGeneration_ ||
+            token != statisticsCancellation_) {
+            return;
+        }
+        pixelStatisticsDialog_->setBusy(false);
+        if (!result.succeeded()) {
+            if (result.errorCode == "task.cancelled") {
+                taskLabel_->setText(tr("像素统计已取消"));
+                pixelStatisticsDialog_->clearResult(tr("计算已取消。"));
+            } else {
+                taskLabel_->setText(tr("像素统计失败"));
+                pixelStatisticsDialog_->clearResult(
+                    QString::fromStdString(result.message));
+            }
+            return;
+        }
+        pixelStatisticsDialog_->setResult(result);
+        taskLabel_->setText(
+            tr("统计完成：%1 个结果样本").arg(result.summary.count));
+    });
+    const auto service = pixelStatisticsService_;
+    watcher->setFuture(QtConcurrent::run([service, request] {
+        return service.execute(request);
+    }));
+}
+
+void MainWindow::cancelPixelStatistics() {
+    if (statisticsCancellation_) {
+        statisticsCancellation_->store(true, std::memory_order_relaxed);
+        statisticsCancellation_.reset();
+    }
+    statisticsProgress_.reset();
+    ++statisticsGeneration_;
+    if (pixelStatisticsDialog_) {
+        pixelStatisticsDialog_->setBusy(false);
+    }
+}
+
 void MainWindow::beginBayerExtraction() {
     if (!documentSession_) {
         return;
     }
+    cancelPixelStatistics();
+    statisticsSelection_.reset();
+    viewport_->setStatisticsSelectionTool(StatisticsSelectionTool::None);
+    pixelStatisticsDialog_->hide();
     if (bayerCancellation_) {
         bayerCancellation_->store(true);
     }

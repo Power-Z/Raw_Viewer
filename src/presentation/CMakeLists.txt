@@ -4,6 +4,8 @@ add_library(rawviewer_presentation STATIC
     image_viewport.cpp
     main_window.cpp
     pixel_info_dialog.cpp
+    pixel_statistics_dialog.cpp
+    statistics_chart_widget.cpp
     theme_manager.cpp
 )
 

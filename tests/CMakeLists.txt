@@ -27,3 +27,13 @@ target_link_libraries(rawviewer_decoder_tests
         Qt6::Test
 )
 add_test(NAME rawviewer_decoder_tests COMMAND rawviewer_decoder_tests)
+
+add_executable(rawviewer_presentation_tests
+    presentation/pixel_statistics_ui_test.cpp
+)
+target_link_libraries(rawviewer_presentation_tests
+    PRIVATE
+        rawviewer_presentation
+        Qt6::Test
+)
+add_test(NAME rawviewer_presentation_tests COMMAND rawviewer_presentation_tests)

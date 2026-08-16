@@ -52,3 +52,51 @@
 - 结论：通过 / 有条件通过 / 拒绝
 - 未完成项及批准人：待填写
 - 证据链接：待填写
+
+---
+
+## 版本：v0.3.0-preview.1
+
+- 发布负责人：Power-Z / Codex
+- commit/tag：`v0.3.0-preview.1` 所指向的发布提交
+- 日期：2026-08-16
+
+### 范围与质量
+
+- [x] 本次 RAW 显示修复与 Pixel Statistics 需求已追踪并验证
+- [x] Debug/Release CTest 4/4 通过
+- [x] 正常、边界、错误、Bayer 分通道和取消路径通过
+- [x] 11776×8842 实际 RAW 全图统计黄金值通过
+- [x] 未新增未接受的高影响风险
+- [x] 现有技术债务已登记
+
+### 数据与安全
+
+- [x] Git 变更和 ZIP 制品不包含本地 RAW、令牌、密钥或日志
+- [x] 实际样本仅以参数、摘要和 SHA-256 清单引用
+- [x] Qt、LibRaw 与 MSVC Runtime 依赖清单和许可证材料进入制品
+- [x] GPL demosaic packs 未链接
+- [ ] 未执行独立依赖漏洞扫描或正式法律审查
+
+### 构建与制品
+
+- [x] MSVC Release 构建和测试通过
+- [x] 编译器、Qt 6.8.3、LibRaw 0.22.2 和依赖版本已记录
+- [x] Windows x64 便携 ZIP 启动并保持响应
+- [x] Qt、LibRaw、MSVC CRT 与 qwindows 插件均从包内加载
+- [x] ZIP SHA-256 已生成并作为独立 Release asset 上传
+- [ ] Preview 便携包未签名，未提供安装/升级/卸载程序
+- [ ] 未在独立干净 Windows 虚拟机上复测
+
+### 文档与发布
+
+- [x] README、可行性方案、需求追踪、项目状态和 Changelog 已更新
+- [x] About 与 `v0.3.0-preview.1` 一致
+- [x] Git tag 与 GitHub prerelease 已创建
+- [x] Windows x64 ZIP 与 SHA-256 已上传至 GitHub Release
+
+### 发布结论
+
+- 结论：有条件通过，仅作为 Preview 预发布
+- 未完成项：代码签名、正式许可证法律复核、独立干净 Windows 验收、安装器；正式稳定版前完成
+- 证据：Debug/Release CTest、实际 RAW 黄金值测试、便携包模块路径与启动冒烟测试、GitHub Release assets

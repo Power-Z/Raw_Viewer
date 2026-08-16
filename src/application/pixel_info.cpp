@@ -36,7 +36,7 @@ PixelInfo queryPixelInfo(const DecodedImage& image,
         result.red = mapByte(sample.red, mapping);
         result.green = mapByte(sample.green, mapping);
         result.blue = mapByte(sample.blue, mapping);
-    } else {
+    } else if (image.metadata.kind != ImageKind::FlatRaw) {
         const auto gray = mapByte(sample.value, mapping);
         result.rgbValid = true;
         result.red = gray;

@@ -4,12 +4,15 @@
 
 #include <QDragEnterEvent>
 #include <QFileInfo>
+#include <QLabel>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QProgressBar>
 #include <QStringList>
 #include <QResizeEvent>
 #include <QUrl>
+#include <QVBoxLayout>
 #include <QWheelEvent>
 
 #include <algorithm>
@@ -24,22 +27,56 @@ ImageViewport::ImageViewport(QWidget* parent)
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
     setMinimumSize(320, 240);
+
+    loadingOverlay_ = new QWidget(this);
+    loadingOverlay_->setObjectName(QStringLiteral("rawLoadingOverlay"));
+    loadingOverlay_->setAttribute(Qt::WA_StyledBackground, true);
+    loadingOverlay_->setStyleSheet(
+        QStringLiteral("#rawLoadingOverlay { background-color: rgba(0, 0, 0, 150); }"));
+    auto* loadingLayout = new QVBoxLayout(loadingOverlay_);
+    loadingLayout->addStretch();
+    loadingLabel_ = new QLabel(tr("正在加载 RAW 图像…"), loadingOverlay_);
+    loadingLabel_->setAlignment(Qt::AlignCenter);
+    loadingLabel_->setStyleSheet(QStringLiteral("color: white; font-weight: 600;"));
+    loadingProgress_ = new QProgressBar(loadingOverlay_);
+    loadingProgress_->setRange(0, 0);
+    loadingProgress_->setTextVisible(false);
+    loadingProgress_->setFixedWidth(260);
+    loadingLayout->addWidget(loadingLabel_);
+    loadingLayout->addWidget(loadingProgress_, 0, Qt::AlignHCenter);
+    loadingLayout->addStretch();
+    loadingOverlay_->hide();
 }
 
 void ImageViewport::setImage(
     std::shared_ptr<const application::DecodedImage> image,
     bool preserveView) {
+    preview_ = {};
     image_ = std::move(image);
-    if (!image_ || image_->preview.rgba.empty()) {
+    if (!image_) {
         clearImage();
         return;
     }
     const auto& source = image_->preview;
-    preview_ = QImage(source.rgba.data(),
-                      source.width,
-                      source.height,
-                      source.width * 4,
-                      QImage::Format_RGBA8888).copy();
+    if (source.hasGrayscale16()) {
+        preview_ = QImage(
+            reinterpret_cast<const uchar*>(source.grayscale16Pixels),
+            source.width,
+            source.height,
+            source.grayscale16StrideSamples *
+                static_cast<int>(sizeof(std::uint16_t)),
+            QImage::Format_Grayscale16);
+    } else if (!source.rgba.empty()) {
+        preview_ = QImage(source.rgba.data(),
+                          source.width,
+                          source.height,
+                          source.width * 4,
+                          QImage::Format_RGBA8888).copy();
+    }
+    if (preview_.isNull()) {
+        clearImage();
+        return;
+    }
     if (preserveView) {
         update();
     } else {
@@ -49,8 +86,8 @@ void ImageViewport::setImage(
 }
 
 void ImageViewport::clearImage() {
-    image_.reset();
     preview_ = {};
+    image_.reset();
     zoom_ = 1.0;
     offset_ = {};
     update();
@@ -86,6 +123,17 @@ void ImageViewport::setPixelOverlayOptions(
     update();
 }
 
+void ImageViewport::setLoading(bool loading, const QString& message) {
+    if (!message.isEmpty()) {
+        loadingLabel_->setText(message);
+    }
+    loadingOverlay_->setVisible(loading);
+    if (loading) {
+        loadingOverlay_->setGeometry(rect());
+        loadingOverlay_->raise();
+    }
+}
+
 void ImageViewport::paintEvent(QPaintEvent*) {
     QPainter painter(this);
     painter.fillRect(rect(), palette().color(QPalette::Base).darker(135));
@@ -97,7 +145,10 @@ void ImageViewport::paintEvent(QPaintEvent*) {
         return;
     }
 
-    painter.setRenderHint(QPainter::SmoothPixmapTransform, zoom_ < 1.0);
+    const bool smoothScale =
+        image_->metadata.kind != application::ImageKind::FlatRaw &&
+        zoom_ < 1.0;
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, smoothScale);
     const QRectF target(offset_.x(),
                         offset_.y(),
                         image_->metadata.width * zoom_,
@@ -106,6 +157,44 @@ void ImageViewport::paintEvent(QPaintEvent*) {
     painter.setPen(palette().color(QPalette::Mid));
     painter.drawRect(target);
     drawPixelOverlay(painter);
+    drawStatisticsSelection(painter);
+}
+
+void ImageViewport::drawStatisticsSelection(QPainter& painter) {
+    if (!statisticsSelectionVisible_ || statisticsTool_ == StatisticsSelectionTool::None) {
+        return;
+    }
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    QPen pen(palette().color(QPalette::Highlight));
+    pen.setCosmetic(true);
+    pen.setWidth(2);
+    pen.setStyle(statisticsSelectionStarted_ ? Qt::DashLine : Qt::SolidLine);
+    painter.setPen(pen);
+    const auto point = [this](const QPoint& source, bool center) {
+        const double shift = center ? 0.5 : 0.0;
+        return QPointF(offset_.x() + (source.x() + shift) * zoom_,
+                       offset_.y() + (source.y() + shift) * zoom_);
+    };
+    if (statisticsTool_ == StatisticsSelectionTool::Line) {
+        painter.drawLine(point(statisticsStart_, true),
+                         point(statisticsEnd_, true));
+        painter.setBrush(palette().color(QPalette::Highlight));
+        painter.drawEllipse(point(statisticsStart_, true), 4.0, 4.0);
+        painter.drawEllipse(point(statisticsEnd_, true), 4.0, 4.0);
+    } else {
+        const int left = std::min(statisticsStart_.x(), statisticsEnd_.x());
+        const int top = std::min(statisticsStart_.y(), statisticsEnd_.y());
+        const int right = std::max(statisticsStart_.x(), statisticsEnd_.x()) + 1;
+        const int bottom = std::max(statisticsStart_.y(), statisticsEnd_.y()) + 1;
+        const QRectF rectangle(point(QPoint(left, top), false),
+                               point(QPoint(right, bottom), false));
+        const QColor accent = palette().color(QPalette::Highlight);
+        painter.fillRect(rectangle,
+                         QColor(accent.red(), accent.green(), accent.blue(), 45));
+        painter.drawRect(rectangle);
+    }
+    painter.restore();
 }
 
 void ImageViewport::drawPixelOverlay(QPainter& painter) {
@@ -195,21 +284,30 @@ void ImageViewport::drawPixelOverlay(QPainter& painter) {
                 continue;
             }
             QStringList lines;
-            if (overlayOptions_.showBayerLabel &&
-                info.channel != domain::BayerChannel::None) {
-                lines << QString::fromLatin1(domain::toString(info.channel));
-            }
-            if (overlayOptions_.showOriginal) {
-                lines << tr("Raw %1").arg(info.originalValue, 0, 'g', 8);
-            }
-            if (overlayOptions_.showProcessed) {
-                lines << tr("Display %1").arg(info.processedValue, 0, 'f', 4);
-            }
-            if (overlayOptions_.showRgb && info.rgbValid) {
-                lines << tr("RGB %1,%2,%3")
-                             .arg(info.red)
-                             .arg(info.green)
-                             .arg(info.blue);
+            const bool isFlatRaw =
+                image_->metadata.kind == application::ImageKind::FlatRaw;
+            if (isFlatRaw) {
+                if (overlayOptions_.showOriginal) {
+                    lines << tr("Raw %1").arg(info.originalValue, 0, 'g', 8);
+                }
+            } else {
+                if (overlayOptions_.showBayerLabel &&
+                    info.channel != domain::BayerChannel::None) {
+                    lines << QString::fromLatin1(domain::toString(info.channel));
+                }
+                if (overlayOptions_.showOriginal) {
+                    lines << tr("Raw %1").arg(info.originalValue, 0, 'g', 8);
+                }
+                if (overlayOptions_.showProcessed) {
+                    lines << tr("Display %1")
+                                 .arg(info.processedValue, 0, 'f', 4);
+                }
+                if (overlayOptions_.showRgb && info.rgbValid) {
+                    lines << tr("RGB %1,%2,%3")
+                                 .arg(info.red)
+                                 .arg(info.green)
+                                 .arg(info.blue);
+                }
             }
             if (lines.isEmpty()) {
                 continue;
@@ -242,6 +340,7 @@ void ImageViewport::drawPixelOverlay(QPainter& painter) {
 
 void ImageViewport::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
+    loadingOverlay_->setGeometry(rect());
     if (fitMode_) {
         fitToWindow();
     }
@@ -249,6 +348,30 @@ void ImageViewport::resizeEvent(QResizeEvent* event) {
 
 void ImageViewport::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton && image_) {
+        if (statisticsTool_ != StatisticsSelectionTool::None) {
+            const QPoint selected = boundedImagePixel(event->position());
+            if (selected.x() < 0 || selected.y() < 0) {
+                return;
+            }
+            if (!statisticsSelectionStarted_) {
+                statisticsStart_ = selected;
+                statisticsEnd_ = selected;
+                statisticsSelectionStarted_ = true;
+                statisticsSelectionVisible_ = true;
+            } else {
+                statisticsEnd_ = selected;
+                statisticsSelectionStarted_ = false;
+                emit statisticsSelectionCompleted(
+                    statisticsStart_.x(),
+                    statisticsStart_.y(),
+                    statisticsEnd_.x(),
+                    statisticsEnd_.y(),
+                    statisticsTool_ == StatisticsSelectionTool::Line);
+            }
+            update();
+            event->accept();
+            return;
+        }
         dragging_ = true;
         fitMode_ = false;
         lastMouse_ = event->position();
@@ -258,6 +381,13 @@ void ImageViewport::mousePressEvent(QMouseEvent* event) {
 }
 
 void ImageViewport::mouseMoveEvent(QMouseEvent* event) {
+    if (statisticsSelectionStarted_) {
+        const QPoint selected = boundedImagePixel(event->position());
+        if (selected.x() >= 0 && selected.y() >= 0) {
+            statisticsEnd_ = selected;
+            update();
+        }
+    }
     if (dragging_) {
         offset_ += event->position() - lastMouse_;
         lastMouse_ = event->position();
@@ -322,6 +452,46 @@ void ImageViewport::publishCoordinate(const QPointF& widgetPoint) {
         static_cast<std::uint64_t>(x) < image_->metadata.width &&
         static_cast<std::uint64_t>(y) < image_->metadata.height;
     emit imageCoordinateChanged(x, y, inside);
+}
+
+void ImageViewport::setStatisticsSelectionTool(
+    StatisticsSelectionTool tool) {
+    statisticsTool_ = tool;
+    statisticsSelectionStarted_ = false;
+    statisticsSelectionVisible_ = false;
+    dragging_ = false;
+    if (statisticsTool_ == StatisticsSelectionTool::None) {
+        unsetCursor();
+    } else {
+        setCursor(Qt::CrossCursor);
+    }
+    update();
+}
+
+void ImageViewport::clearStatisticsSelection() {
+    statisticsSelectionStarted_ = false;
+    statisticsSelectionVisible_ = false;
+    update();
+}
+
+QPoint ImageViewport::boundedImagePixel(const QPointF& widgetPoint) const {
+    if (!image_ || image_->metadata.width == 0 || image_->metadata.height == 0) {
+        return {-1, -1};
+    }
+    const QPointF source = imageCoordinate(widgetPoint);
+    if (source.x() < 0.0 || source.y() < 0.0 ||
+        source.x() >= static_cast<double>(image_->metadata.width) ||
+        source.y() >= static_cast<double>(image_->metadata.height)) {
+        return {-1, -1};
+    }
+    const auto maximumX = static_cast<qint64>(image_->metadata.width - 1);
+    const auto maximumY = static_cast<qint64>(image_->metadata.height - 1);
+    return {
+        static_cast<int>(std::clamp<qint64>(
+            static_cast<qint64>(std::floor(source.x())), 0, maximumX)),
+        static_cast<int>(std::clamp<qint64>(
+            static_cast<qint64>(std::floor(source.y())), 0, maximumY))
+    };
 }
 
 } // namespace rawviewer::presentation

@@ -3,6 +3,7 @@ add_library(rawviewer_application STATIC
     document_session.cpp
     open_image_service.cpp
     pixel_info.cpp
+    pixel_statistics.cpp
     preview_renderer.cpp
 )
 

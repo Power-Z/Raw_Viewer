@@ -5,6 +5,7 @@
 
 #include "application/bayer_extract.h"
 #include "application/pixel_info.h"
+#include "application/pixel_statistics.h"
 
 #include <QFile>
 #include <QImage>
@@ -15,6 +16,7 @@
 #include <cmath>
 #include <filesystem>
 #include <memory>
+#include <numeric>
 
 namespace {
 
@@ -43,12 +45,14 @@ class DecoderTest final : public QObject {
 
 private slots:
     void decodesLittleEndianWithHeaderAndStride();
+    void unfoldsSequentialBayerSamplesAfterSkip();
     void decodesBigEndianUInt32();
     void decodesFloat32();
     void refusesTruncatedFile();
     void cameraContainerWinsBySignature();
     void preservesStandardImageRgbForPixelInfo();
     void exportsExtractedBayerChannelAsCsv();
+    void verifiesApprovedFlatSampleWhenConfigured();
     void verifiesApprovedCameraSampleWhenConfigured();
 };
 
@@ -90,6 +94,53 @@ void DecoderTest::decodesLittleEndianWithHeaderAndStride() {
     QCOMPARE(result.image->pixels->sample(1, 0).value, 2.0);
     QCOMPARE(result.image->pixels->sample(0, 1).value, 4660.0);
     QCOMPARE(result.image->pixels->sample(1, 1).value, 255.0);
+}
+
+void DecoderTest::unfoldsSequentialBayerSamplesAfterSkip() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath("sequence.RAW");
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QByteArray bytes;
+    bytes.append("SKIP", 4);
+    for (std::uint16_t value = 1; value <= 6; ++value) {
+        bytes.append(static_cast<char>(value & 0xff));
+        bytes.append(static_cast<char>((value >> 8) & 0xff));
+    }
+    QCOMPARE(file.write(bytes), bytes.size());
+    file.close();
+
+    rawviewer::domain::RawDescriptor descriptor;
+    descriptor.width = 3;
+    descriptor.height = 2;
+    descriptor.headerBytes = 4;
+    descriptor.scalarType = rawviewer::domain::ScalarType::UInt16;
+    descriptor.byteOrder = rawviewer::domain::ByteOrder::LittleEndian;
+    descriptor.bayerPattern = rawviewer::domain::BayerPattern::RGGB;
+
+    rawviewer::infrastructure::FlatRawDecoder decoder;
+    const auto result = decoder.decode(makeRequest(path, descriptor));
+    QVERIFY2(result.succeeded(), result.message.c_str());
+    for (std::uint64_t y = 0; y < 2; ++y) {
+        for (std::uint64_t x = 0; x < 3; ++x) {
+            QCOMPARE(result.image->pixels->sample(x, y).value,
+                     static_cast<double>(y * 3 + x + 1));
+        }
+    }
+    QCOMPARE(result.image->metadata.bayerPattern,
+             rawviewer::domain::BayerPattern::RGGB);
+    QVERIFY(result.image->preview.hasGrayscale16());
+    QCOMPARE(result.image->preview.width, 3);
+    QCOMPARE(result.image->preview.height, 2);
+    QCOMPARE(result.image->preview.grayscale16StrideSamples, 4);
+    QCOMPARE(result.image->preview.grayscale16Pixels[0], std::uint16_t{1});
+    QCOMPARE(result.image->preview.grayscale16Pixels[1], std::uint16_t{2});
+    QCOMPARE(result.image->preview.grayscale16Pixels[2], std::uint16_t{3});
+    QCOMPARE(result.image->preview.grayscale16Pixels[4], std::uint16_t{4});
+    QCOMPARE(result.image->preview.grayscale16Pixels[5], std::uint16_t{5});
+    QCOMPARE(result.image->preview.grayscale16Pixels[6], std::uint16_t{6});
+    QVERIFY(!result.image->signalPreview);
 }
 
 void DecoderTest::decodesBigEndianUInt32() {
@@ -251,6 +302,72 @@ void DecoderTest::exportsExtractedBayerChannelAsCsv() {
              QByteArray("channel_x,channel_y,source_x,source_y,value\n"
                         "0,0,1,0,1\n"
                         "1,0,3,0,3\n"));
+}
+
+void DecoderTest::verifiesApprovedFlatSampleWhenConfigured() {
+    const QByteArray configured = qgetenv("RAWVIEWER_FLAT_SAMPLE");
+    if (configured.isEmpty()) {
+        QSKIP("RAWVIEWER_FLAT_SAMPLE is not configured.");
+    }
+    const QString path = QString::fromLocal8Bit(configured);
+    QVERIFY2(QFile::exists(path), configured.constData());
+
+    rawviewer::domain::RawDescriptor descriptor;
+    descriptor.width = 11776;
+    descriptor.height = 8842;
+    descriptor.headerBytes = 0;
+    descriptor.rowStrideBytes = 0;
+    descriptor.scalarType = rawviewer::domain::ScalarType::UInt16;
+    descriptor.byteOrder = rawviewer::domain::ByteOrder::LittleEndian;
+    descriptor.bayerPattern = rawviewer::domain::BayerPattern::RGGB;
+    rawviewer::infrastructure::FlatRawDecoder decoder;
+    const auto result = decoder.decode(makeRequest(path, descriptor));
+
+    QVERIFY2(result.succeeded(), result.message.c_str());
+    QCOMPARE(result.image->metadata.width, std::uint64_t{11776});
+    QCOMPARE(result.image->metadata.height, std::uint64_t{8842});
+    QCOMPARE(result.image->metadata.bayerPattern,
+             rawviewer::domain::BayerPattern::RGGB);
+    QVERIFY(result.image->preview.hasGrayscale16());
+    QCOMPARE(result.image->preview.width, 11776);
+    QCOMPARE(result.image->preview.height, 8842);
+    QCOMPARE(result.image->preview.grayscale16StrideSamples, 11776);
+    QVERIFY(!result.image->preview.grayscale16Storage);
+    QCOMPARE(result.image->preview.grayscale16Pixels[0], std::uint16_t{1});
+    QCOMPARE(result.image->preview.grayscale16Pixels[1], std::uint16_t{0});
+    QCOMPARE(result.image->preview.grayscale16Pixels[11776],
+             std::uint16_t{23734});
+    QVERIFY(!result.image->signalPreview);
+    QCOMPARE(result.image->pixels->sample(0, 0).value, 1.0);
+    QCOMPARE(result.image->pixels->sample(1, 0).value, 0.0);
+    QCOMPARE(result.image->pixels->sample(0, 1).value, 23734.0);
+    QCOMPARE(result.image->pixels->sample(124, 92).value, 4142.0);
+    QCOMPARE(result.image->pixels->sample(11775, 8841).value, 4219.0);
+
+    rawviewer::application::PixelStatisticsRequest statisticsRequest;
+    statisticsRequest.source = result.image;
+    statisticsRequest.mode =
+        rawviewer::application::PixelStatisticsMode::Status;
+    statisticsRequest.selection = {0, 0, 11775, 8841};
+    statisticsRequest.histogramBins = 256;
+    statisticsRequest.progressPermille =
+        std::make_shared<std::atomic_uint32_t>(0);
+    const auto statistics =
+        rawviewer::application::PixelStatisticsService().execute(
+            statisticsRequest);
+    QVERIFY2(statistics.succeeded(), statistics.message.c_str());
+    QCOMPARE(statistics.summary.count, std::uint64_t{104123392});
+    QCOMPARE(statistics.summary.minimum, 0.0);
+    QCOMPARE(statistics.summary.maximum, 65535.0);
+    QVERIFY(std::abs(statistics.summary.mean - 13043.657121994258) < 1.0e-6);
+    QVERIFY(std::abs(statistics.summary.standardDeviation -
+                     11863.858747775810) < 1.0e-6);
+    QCOMPARE(std::accumulate(statistics.plot.y.begin(),
+                             statistics.plot.y.end(),
+                             0.0),
+             104123392.0);
+    QCOMPARE(statisticsRequest.progressPermille->load(),
+             std::uint32_t{1000});
 }
 
 void DecoderTest::verifiesApprovedCameraSampleWhenConfigured() {

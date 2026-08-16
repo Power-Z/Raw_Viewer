@@ -1,11 +1,15 @@
 #include "application/bayer_extract.h"
 #include "application/document_session.h"
 #include "application/pixel_info.h"
+#include "application/pixel_statistics.h"
 #include "application/preview_renderer.h"
 
 #include <QTest>
 
+#include <cmath>
 #include <memory>
+#include <numeric>
+#include <vector>
 
 namespace {
 
@@ -108,12 +112,15 @@ private slots:
     void clearsRedoAfterNewEdit();
     void isolatesDocumentHistory();
     void rendersWithoutChangingOriginal();
+    void preservesDirectGray16WithoutRgbRendering();
     void queriesOriginalProcessedRgbAndBayerValues();
     void rejectsOutOfBoundsPixelInfo();
     void extractsChannelsFromOddSizedImage();
     void extractsUnalignedRoiAndConvertsCoordinates();
     void rejectsInvalidAndEmptyBayerRegions();
     void cancelsBayerExtraction();
+    void calculatesStatusAndProfilesFromOriginalBayerSamples();
+    void filtersStatisticsByBayerChannelAndCancels();
 };
 
 void DocumentSessionTest::keepsOnlyFiveUndoOperations() {
@@ -168,6 +175,32 @@ void DocumentSessionTest::rendersWithoutChangingOriginal() {
     QCOMPARE(rendered->signalPreview.get(), original->signalPreview.get());
 }
 
+void DocumentSessionTest::preservesDirectGray16WithoutRgbRendering() {
+    const auto original = makeBayerImage(2, 2);
+    auto grayscale = std::make_shared<std::vector<std::uint16_t>>(
+        std::initializer_list<std::uint16_t>{25, 50, 75, 100});
+    original->preview.width = 2;
+    original->preview.height = 2;
+    original->preview.grayscale16Storage = grayscale;
+    original->preview.grayscale16Pixels = grayscale->data();
+    original->preview.grayscale16StrideSamples = 2;
+
+    rawviewer::domain::DisplayMapping mapping;
+    mapping.blackPoint = 20.0;
+    mapping.whitePoint = 80.0;
+    mapping.gamma = 2.2;
+    const auto rendered = rawviewer::application::PreviewRenderer::render(
+        original, mapping);
+
+    QVERIFY(rendered);
+    QCOMPARE(rendered->preview.grayscale16Storage.get(), grayscale.get());
+    QCOMPARE(rendered->preview.grayscale16Pixels, grayscale->data());
+    QVERIFY(rendered->preview.rgba.empty());
+    QCOMPARE(rendered->preview.grayscale16Pixels[0], std::uint16_t{25});
+    QCOMPARE(rendered->preview.grayscale16Pixels[3], std::uint16_t{100});
+    QCOMPARE(original->pixels->sample(1, 1).value, 11.0);
+}
+
 void DocumentSessionTest::queriesOriginalProcessedRgbAndBayerValues() {
     const auto image = makeImage();
     image->metadata.bayerPattern = rawviewer::domain::BayerPattern::RGGB;
@@ -181,10 +214,7 @@ void DocumentSessionTest::queriesOriginalProcessedRgbAndBayerValues() {
     QVERIFY(info.valid);
     QCOMPARE(info.originalValue, 50.0);
     QCOMPARE(info.processedValue, 0.5);
-    QVERIFY(info.rgbValid);
-    QCOMPARE(info.red, std::uint8_t{128});
-    QCOMPARE(info.green, std::uint8_t{128});
-    QCOMPARE(info.blue, std::uint8_t{128});
+    QVERIFY(!info.rgbValid);
     QCOMPARE(info.channel, rawviewer::domain::BayerChannel::Gr);
 }
 
@@ -266,6 +296,82 @@ void DocumentSessionTest::cancelsBayerExtraction() {
     request.cancellation = std::make_shared<std::atomic_bool>(true);
     const auto result =
         rawviewer::application::BayerExtractService().execute(request);
+    QVERIFY(!result.succeeded());
+    QCOMPARE(QString::fromStdString(result.errorCode),
+             QStringLiteral("task.cancelled"));
+}
+
+void DocumentSessionTest::calculatesStatusAndProfilesFromOriginalBayerSamples() {
+    rawviewer::application::PixelStatisticsService service;
+    rawviewer::application::PixelStatisticsRequest request;
+    request.source = makeBayerImage(4, 3);
+    request.selection = {1, 0, 3, 1};
+    request.histogramBins = 256;
+
+    request.mode = rawviewer::application::PixelStatisticsMode::Status;
+    auto result = service.execute(request);
+    QVERIFY2(result.succeeded(), result.message.c_str());
+    QCOMPARE(result.summary.count, std::uint64_t{6});
+    QCOMPARE(result.summary.minimum, 1.0);
+    QCOMPARE(result.summary.maximum, 13.0);
+    QCOMPARE(result.summary.mean, 7.0);
+    QVERIFY(std::abs(result.summary.standardDeviation -
+                     std::sqrt(154.0 / 6.0)) < 1.0e-12);
+    QCOMPARE(result.plot.x.size(), std::size_t{256});
+    QCOMPARE(std::accumulate(result.plot.y.begin(),
+                             result.plot.y.end(),
+                             0.0),
+             6.0);
+
+    request.mode =
+        rawviewer::application::PixelStatisticsMode::HorizontalBox;
+    result = service.execute(request);
+    QVERIFY2(result.succeeded(), result.message.c_str());
+    QCOMPARE(result.plot.y, std::vector<double>({6.0, 7.0, 8.0}));
+    QCOMPARE(result.summary.count, std::uint64_t{3});
+    QCOMPARE(result.summary.mean, 7.0);
+
+    request.mode = rawviewer::application::PixelStatisticsMode::VerticalBox;
+    result = service.execute(request);
+    QVERIFY2(result.succeeded(), result.message.c_str());
+    QCOMPARE(result.plot.y, std::vector<double>({2.0, 12.0}));
+    QCOMPARE(result.summary.count, std::uint64_t{2});
+    QCOMPARE(result.summary.standardDeviation, 5.0);
+
+    request.mode = rawviewer::application::PixelStatisticsMode::Line;
+    request.selection = {0, 0, 3, 2};
+    result = service.execute(request);
+    QVERIFY2(result.succeeded(), result.message.c_str());
+    QCOMPARE(result.plot.y, std::vector<double>({0.0, 11.0, 12.0, 23.0}));
+    QCOMPARE(result.summary.count, std::uint64_t{4});
+    QCOMPARE(result.summary.mean, 11.5);
+}
+
+void DocumentSessionTest::filtersStatisticsByBayerChannelAndCancels() {
+    rawviewer::application::PixelStatisticsService service;
+    rawviewer::application::PixelStatisticsRequest request;
+    request.source = makeBayerImage(4, 2);
+    request.selection = {0, 0, 3, 1};
+    request.mode = rawviewer::application::PixelStatisticsMode::Status;
+    request.channel = rawviewer::domain::BayerChannel::R;
+    request.histogramBins = 64;
+    auto result = service.execute(request);
+    QVERIFY2(result.succeeded(), result.message.c_str());
+    QCOMPARE(result.summary.count, std::uint64_t{2});
+    QCOMPARE(result.summary.minimum, 0.0);
+    QCOMPARE(result.summary.maximum, 2.0);
+    QCOMPARE(result.summary.mean, 1.0);
+
+    request.mode =
+        rawviewer::application::PixelStatisticsMode::HorizontalBox;
+    result = service.execute(request);
+    QVERIFY2(result.succeeded(), result.message.c_str());
+    QCOMPARE(result.plot.y, std::vector<double>({0.0, 2.0}));
+    QCOMPARE(result.summary.count, std::uint64_t{2});
+    QCOMPARE(result.summary.mean, 1.0);
+
+    request.cancellation = std::make_shared<std::atomic_bool>(true);
+    result = service.execute(request);
     QVERIFY(!result.succeeded());
     QCOMPARE(QString::fromStdString(result.errorCode),
              QStringLiteral("task.cancelled"));

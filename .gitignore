@@ -44,6 +44,8 @@ temp/
 
 # RAW test data is intentionally excluded by default.
 # Add only small, redistributable fixtures under tests/fixtures/.
+/Data/
+/artifacts/
 *.raw
 *.dng
 *.bin

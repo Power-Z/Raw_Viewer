@@ -9,15 +9,18 @@
 - C++20、Qt 6 Widgets、CMake Presets 和分层 target；
 - 20/60/20 三栏主窗口、文件树、拖放、状态栏和五种主题；
 - JPG、PNG、BMP 基础解码；
-- UInt8、UInt16、UInt32、Float32 平面 RAW，支持端序、header 和 row stride；
+- UInt8、UInt16、UInt32、Float32 平面 RAW，支持端序、skip bytes 和 row stride；
 - 主线 LibRaw 0.22.2 相机 RAW 容器解码；
 - 左键平移、鼠标锚点缩放、预览直方图和原始像素查询；
-- 后台打开、取消标志和 generation 防止旧结果覆盖。
+- 后台打开、视口加载动画、取消标志和 generation 防止旧结果覆盖。
+- UInt16 平面 RAW 使用完整 W×H Grayscale16 视图，按文件顺序逐像素显示，不生成缩小预览、不按 Bayer channel 进行 RGB 着色；
 - 原始信号与显示预览分离，调整显示参数不会修改原始图像；
 - Sensor BLV 与 Display BLV 分离，并提供 Display WLV、Gamma 和图像默认值复位；
 - 每个文档独立的五步参数撤销/重做，显示变化保持当前缩放与平移。
 - Pixel Info 同时查询 Raw、Display、RGB 与 Bayer 通道，并在可读缩放级别绘制有界标签和 Bayer mesh。
 - Bayer Extract 支持 R/Gr/Gb/B 只读通道视图、源 ROI、通道/源坐标互转和带坐标的 CSV 导出。
+- `Pixel Statistics` 支持 Status、Horizontal Box、Vertical Box、Line 四种原始 Bayer 统计模式，WB 入口预留；两次左键完成矩形/线段选择；后台计算 count/min/max/mean/std、直方图或一维 profile；支持 All/R/Gr/Gb/B 通道、进度和取消。
+- 像素统计流式读取只读原始像素源，不复制整幅 RAW；图表数据有界降采样。统计口径和性能设计见 [V0.3 Pixel Statistics 方案](docs/plans/v0.3-pixel-statistics.md)。
 
 ## Windows 开发环境
 
@@ -36,6 +39,14 @@
 $env:RAWVIEWER_QT_ROOT = "C:\Qt\6.8.3\msvc2022_64"
 $env:RAWVIEWER_LIBRAW_ROOT = "C:\LibRaw\LibRaw-0.22.2"
 ```
+
+生成包含 Qt、VC Runtime、LibRaw 和第三方许可证的 Windows x64 便携包：
+
+```powershell
+.\scripts\package-windows.ps1 -Version v0.3.0-preview.1
+```
+
+输出位于 `artifacts/`，包含 ZIP 和 SHA-256 校验文件。
 
 配置、构建、测试和运行：
 
@@ -59,7 +70,14 @@ $env:RAWVIEWER_CAMERA_SAMPLE = "E:\code\Raw_viewer\Data\Test_data\B0012535.B0011
 .\scripts\dev.ps1 test
 ```
 
-`Data/` 中的 RAW 不会进入 Git。平面 `.raw/.bin` 使用左侧参数；TIFF/DNG/厂商相机容器按内容签名进入 LibRaw，不会按扩展名盲目平面解码。
+同时用 11776×8842、UInt16、小端、Skip bytes=0 验证本地平面 RAW：
+
+```powershell
+$env:RAWVIEWER_FLAT_SAMPLE = "E:\code\Raw_viewer\Data\Test_data\B0012535.B0011072.raw"
+.\scripts\dev.ps1 test
+```
+
+`Data/` 中的 RAW 不会进入 Git。平面 `.raw/.RAW/.bin/.BIN` 使用左侧参数，从 Skip bytes 后按行连续展开；UInt16 显示采用完整分辨率单通道 Grayscale16 和最近邻缩放，像素标签直接读取原始 UInt16。TIFF/DNG/厂商相机容器按内容签名进入 LibRaw，不会按扩展名盲目平面解码。
 
 ## 仓库结构
 
