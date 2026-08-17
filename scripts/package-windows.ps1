@@ -141,6 +141,7 @@ if (-not $SkipSmokeTest) {
     $process = Start-Process `
         -FilePath (Join-Path $packageRoot "RawViewer.exe") `
         -WorkingDirectory $packageRoot `
+        -WindowStyle Hidden `
         -PassThru
     try {
         $null = $process.WaitForInputIdle(10000)
