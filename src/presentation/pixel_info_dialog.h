@@ -5,8 +5,6 @@
 #include <QDialog>
 
 class QCheckBox;
-class QDoubleSpinBox;
-class QSpinBox;
 
 namespace rawviewer::presentation {
 
@@ -25,13 +23,8 @@ private:
     void publishOptions();
 
     QCheckBox* enabledCheck_ = nullptr;
-    QCheckBox* originalCheck_ = nullptr;
-    QCheckBox* processedCheck_ = nullptr;
-    QCheckBox* rgbCheck_ = nullptr;
     QCheckBox* meshCheck_ = nullptr;
     QCheckBox* bayerLabelCheck_ = nullptr;
-    QDoubleSpinBox* thresholdSpin_ = nullptr;
-    QSpinBox* maximumLabelsSpin_ = nullptr;
 };
 
 } // namespace rawviewer::presentation

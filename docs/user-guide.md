@@ -1,0 +1,131 @@
+# Raw Viewer 用户指南
+
+适用版本：`v0.3.0-preview.2`，Windows 10/11 x64。
+
+## 1. 获取与运行
+
+1. 从 [GitHub Releases](https://github.com/Power-Z/Raw_Viewer/releases) 下载 `RawViewer-v0.3.0-preview.2-windows-x64.zip` 及同名 `.sha256` 文件。
+2. 在 PowerShell 中校验：
+
+   ```powershell
+   Get-FileHash .\RawViewer-v0.3.0-preview.2-windows-x64.zip -Algorithm SHA256
+   ```
+
+   输出应与 `.sha256` 文件一致。
+3. 将 ZIP 完整解压到可写目录，不要只从压缩包内直接运行 exe。
+4. 运行 `RawViewer.exe`。这是未签名 Preview，Windows SmartScreen 可能显示提示。
+
+便携包已经包含 Qt 6.8.3、LibRaw 0.22.2、MSVC x64 Runtime、平台插件和第三方许可证，不需要单独安装这些运行库。
+
+## 2. 打开图像
+
+支持三种入口：
+
+- `File` 菜单选择文件；
+- 左侧文件树双击；
+- 将单个文件拖入中央视口。
+
+### 2.1 普通图片
+
+JPG、PNG、BMP 使用文件自身的尺寸与 RGB 数据，无需填写 RAW 参数。
+
+### 2.2 平面 RAW/BIN
+
+`.raw`、`.bin` 文件没有统一的自描述头，必须在左侧设置与数据一致的参数：
+
+- `Width` / `Height`：图像宽高；
+- `Skip bytes`：首个像素之前跳过的字节数；
+- `Scalar type`：UInt8、UInt16、UInt32 或 Float32；
+- `Byte order`：Little endian 或 Big endian；
+- `Row stride`：每行实际字节跨度；为 0 时按紧密行计算；
+- `Bayer pattern`：None、RGGB、BGGR、GRBG 或 GBRG。
+
+读取顺序固定为：跳过 `Skip bytes`，从第一个样本开始按行从左到右、从上到下组成 `Width × Height` 图像。平面 UInt16 RAW 使用单通道 Grayscale16 显示，不执行 RGB 着色、旋转或 Bayer demosaic。
+
+默认平面 RAW 参数为 11776×8842、UInt16、Little endian、Skip=0。参数不匹配时程序会拒绝截断数据；文件尾部超过所需图像范围的数据不会显示。
+
+### 2.3 相机 RAW 容器
+
+TIFF/DNG/厂商 RAW 先按内容签名识别，再由 LibRaw 读取尺寸、数据偏移与 Bayer 元数据；不会仅因扩展名为 `.raw` 就猜测平面布局。
+
+## 3. 最近文件
+
+`File > Recent Files` 保存最近 10 个成功打开的文档，并保存当时使用的完整平面 RAW 参数：
+
+- 再次选择时按原配置加载；
+- 重复文件移动到列表顶部；
+- 已删除文件会标记并禁用；
+- 菜单底部可清除记录。
+
+最近文件配置保存在当前 Windows 用户设置中，不写回原图。
+
+## 4. 浏览与显示
+
+- 左键拖拽：平移图像；
+- 鼠标滚轮：以鼠标位置为锚点缩放；
+- 打开新图时：自动适合窗口；
+- 状态栏：显示坐标、Raw/Display/RGB 信息、Bayer 通道和缩放比例。
+
+右侧显示参数提供 Sensor BLV、Display BLV、Display WLV、Gamma 和恢复默认值。修改只影响显示映射，原始文件与原始像素源保持只读。Undo/Redo 为每个文档分别保存最多五步逻辑操作。
+
+## 5. Pixel Info
+
+Pixel Info 仅包含三个选项：
+
+1. `像素值标注`：RAW 自动显示原始值，普通 RGB 图自动显示 `R,G,B`；
+2. `Bayer mesh`：根据 Bayer pattern 添加半透明 R、Gr、Gb、B 遮罩，Gr/Gb 使用不同绿色；
+3. `Bayer pattern`：在每个像素右下角显示 `R/Gr/Gb/B`。
+
+单个源像素显示高度达到 40 px 后出现叠加层。数值位于像素中央，字高约为像素高度的 1/6；Pattern 位于右下角，字高约为 1/7。数值根据当前显示灰度自动选择黑字或白字。达到阈值后所有可见像素都会标注，并随拖拽和缩放逐帧移动。
+
+## 6. Bayer Extract
+
+Bayer Extract 从当前文档的原始全图中周期性提取指定 pattern 位置，并重新组合为新的只读灰度视图。每次 Extract 都以 original source 为输入，不会基于上一次提取结果继续处理。
+
+### 6.1 Pattern
+
+- 预设：2×2 标准 Bayer、4×4 Quad Bayer、8×8 Hex Bayer；
+- `Custom`：支持 1×1～16×16，自定义名称、宽高和位置；
+- 点击方块切换保留/忽略；`Select all`、`Clear`、`Invert` 批量操作；
+- 自定义配置可以保存、重新加载和删除。
+
+矩阵顶部为 X 坐标，左侧为 Y 坐标。方块大小随 pattern 自动缩放：2×2 为 48 px、4×4 为 36 px、8×8 为 24 px、大尺寸自定义 pattern 为 12 px。
+
+### 6.2 Packing
+
+- `Row-major`：选中位置按从左到右、再从上到下排列；
+- `Column-major`：选中位置按从上到下、再从左到右排列；
+- `?` 按钮显示说明。
+
+源宽高不是 pattern 整数倍时，Extract 前会确认是否处理右侧/底部的部分单元。全选所有位置属于恒等操作，结果严格等于原图并复用原始只读数据；非全选使用最长边 1024 的有界信号预览，像素查询仍返回准确原始坐标和值。
+
+## 7. Pixel Statistics
+
+支持：
+
+- `Status`：矩形区域 count/min/max/mean/population std 和直方图；
+- `Horizontal Box`：矩形区域按水平方向生成平均 profile；
+- `Vertical Box`：矩形区域按垂直方向生成平均 profile；
+- `Line`：两次点击确定线段并生成沿线 profile；
+- `WB`：当前版本仅预留入口。
+
+矩形和线段均使用两次左键完成。统计可以选择 All/R/Gr/Gb/B，后台流式读取原始 Bayer 数据，支持进度、取消和过期任务丢弃，不复制完整 RAW。
+
+## 8. 已知限制
+
+- Preview 便携包未签名，也未提供安装器；
+- 尚未在独立干净 Windows 虚拟机完成正式验收；
+- 10/12/14-bit packed RAW 尚不支持；
+- 200 MP / 400 MB 正式性能目标、GPU 瓦片渲染和双图对比仍在后续计划；
+- WB 统计尚未实施；
+- Pixel Info 在 40 px/像素以上标注全部可见像素，极大窗口下的性能仍取决于 CPU 与显卡驱动。
+
+## 9. 故障排查
+
+- RAW 画面错行：检查 Width、Height、Skip、Scalar type、Byte order 和 Row stride；
+- RAW 无法打开：确认 `skip + stride × height` 不超过文件大小；
+- 相机 RAW 被当作平面数据：保留原始容器内容，不要仅修改扩展名；
+- 程序提示缺少 DLL：确认完整解压 ZIP，且 `platforms/qwindows.dll`、Qt DLL、`libraw.dll` 与 MSVC Runtime 未被删除；
+- 最近文件不可用：原文件可能被移动或删除，请从新位置重新打开。
+
+报告问题时请提供应用版本、Windows 版本、RAW 参数、可复现步骤和错误信息。不要公开上传客户 RAW、个人图像、访问令牌或其他未授权数据。

@@ -4,6 +4,7 @@
 #include "infrastructure/flat_raw_decoder.h"
 #include "infrastructure/local_logger.h"
 #include "infrastructure/qt_image_decoder.h"
+#include "infrastructure/qt_recent_document_store.h"
 #include "presentation/main_window.h"
 
 #include <QApplication>
@@ -17,9 +18,9 @@ int main(int argc, char* argv[]) {
     QCoreApplication::setOrganizationName("Power-Z");
     QCoreApplication::setOrganizationDomain("github.com/Power-Z");
     QCoreApplication::setApplicationName("RawViewer");
-    QCoreApplication::setApplicationVersion("0.3.0");
+    QCoreApplication::setApplicationVersion("0.3.0-preview.2");
     rawviewer::infrastructure::installLocalLogging();
-    qInfo("Raw Viewer 0.3.0 starting");
+    qInfo("Raw Viewer 0.3.0-preview.2 starting");
 
     std::vector<std::shared_ptr<const rawviewer::application::IImageDecoder>>
         decoders;
@@ -34,8 +35,11 @@ int main(int argc, char* argv[]) {
             std::move(decoders));
     auto bayerExporter =
         std::make_shared<rawviewer::infrastructure::BayerCsvExporter>();
+    auto recentDocuments =
+        std::make_shared<rawviewer::infrastructure::QtRecentDocumentStore>();
 
-    rawviewer::presentation::MainWindow window(service, bayerExporter);
+    rawviewer::presentation::MainWindow window(
+        service, bayerExporter, recentDocuments);
     window.show();
     if (argc == 2) {
         window.openPath(QString::fromLocal8Bit(argv[1]));

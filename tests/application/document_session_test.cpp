@@ -116,6 +116,9 @@ private slots:
     void queriesOriginalProcessedRgbAndBayerValues();
     void rejectsOutOfBoundsPixelInfo();
     void extractsChannelsFromOddSizedImage();
+    void packsArbitraryMaskByRowsAndColumns();
+    void extractsStandardQuadHexAndSpecialPatternPositions();
+    void selectingEveryCellIsExactZeroCopyIdentity();
     void extractsUnalignedRoiAndConvertsCoordinates();
     void rejectsInvalidAndEmptyBayerRegions();
     void cancelsBayerExtraction();
@@ -229,28 +232,157 @@ void DocumentSessionTest::extractsChannelsFromOddSizedImage() {
     rawviewer::application::BayerExtractService service;
     rawviewer::application::BayerExtractRequest request;
     request.source = makeBayerImage(5, 3);
-    request.channel = rawviewer::domain::BayerChannel::R;
+    request.mask = {"R", 2, 2, {1, 0, 0, 0}};
     const auto red = service.execute(request);
     QVERIFY2(red.succeeded(), red.message.c_str());
     QCOMPARE(red.extraction->geometry.width, std::uint64_t{3});
     QCOMPARE(red.extraction->geometry.height, std::uint64_t{2});
-    QCOMPARE(red.extraction->geometry.sourceOriginX, std::uint64_t{0});
-    QCOMPARE(red.extraction->geometry.sourceOriginY, std::uint64_t{0});
+    QVERIFY(red.extraction->geometry.hasPartialEdgeUnits());
     QCOMPARE(red.extraction->image->pixels->sample(2, 1).value, 24.0);
     QCOMPARE(request.source->pixels->sample(4, 2).value, 24.0);
 
-    request.channel = rawviewer::domain::BayerChannel::B;
+    request.mask = {"B", 2, 2, {0, 0, 0, 1}};
     const auto blue = service.execute(request);
     QVERIFY2(blue.succeeded(), blue.message.c_str());
-    QCOMPARE(blue.extraction->geometry.width, std::uint64_t{2});
-    QCOMPARE(blue.extraction->geometry.height, std::uint64_t{1});
+    QCOMPARE(blue.extraction->geometry.width, std::uint64_t{3});
+    QCOMPARE(blue.extraction->geometry.height, std::uint64_t{2});
     QCOMPARE(blue.extraction->image->pixels->sample(1, 0).value, 13.0);
+    QVERIFY(!blue.extraction->image->pixels->sample(2, 1).valid);
+}
+
+void DocumentSessionTest::packsArbitraryMaskByRowsAndColumns() {
+    rawviewer::application::BayerExtractRequest request;
+    request.source = makeBayerImage(4, 4);
+    request.mask = {"three cells", 2, 2, {0, 1, 1, 1}};
+
+    const auto rowMajor =
+        rawviewer::application::BayerExtractService().execute(request);
+    QVERIFY2(rowMajor.succeeded(), rowMajor.message.c_str());
+    QCOMPARE(rowMajor.extraction->geometry.outputUnitWidth, std::uint64_t{2});
+    QCOMPARE(rowMajor.extraction->geometry.outputUnitHeight, std::uint64_t{2});
+    QCOMPARE(rowMajor.extraction->image->pixels->sample(0, 0).value, 1.0);
+    QCOMPARE(rowMajor.extraction->image->pixels->sample(1, 0).value, 10.0);
+    QCOMPARE(rowMajor.extraction->image->pixels->sample(0, 1).value, 11.0);
+    QVERIFY(!rowMajor.extraction->image->pixels->sample(1, 1).valid);
+    const std::optional<rawviewer::domain::BayerCoordinate> source11 =
+        rawviewer::domain::BayerCoordinate{1, 1};
+    QCOMPARE(rowMajor.extraction->geometry.sourceCoordinate(0, 1), source11);
+
+    request.packingOrder = rawviewer::application::BayerPackingOrder::ColumnMajor;
+    const auto columnMajor =
+        rawviewer::application::BayerExtractService().execute(request);
+    QVERIFY2(columnMajor.succeeded(), columnMajor.message.c_str());
+    QCOMPARE(columnMajor.extraction->image->pixels->sample(0, 0).value, 10.0);
+    QCOMPARE(columnMajor.extraction->image->pixels->sample(0, 1).value, 1.0);
+    QCOMPARE(columnMajor.extraction->image->pixels->sample(1, 0).value, 11.0);
+    QVERIFY(!columnMajor.extraction->image->pixels->sample(1, 1).valid);
+    const std::optional<rawviewer::domain::BayerCoordinate> output10 =
+        rawviewer::domain::BayerCoordinate{1, 0};
+    QCOMPARE(columnMajor.extraction->geometry.outputCoordinate(1, 1), output10);
+}
+
+void DocumentSessionTest::extractsStandardQuadHexAndSpecialPatternPositions() {
+    rawviewer::application::BayerExtractService service;
+
+    rawviewer::application::BayerExtractRequest standard;
+    standard.source = makeBayerImage(6, 4);
+    const std::vector<std::vector<std::uint8_t>> corners{
+        {1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, 1}};
+    const std::vector<double> firstValues{0.0, 1.0, 10.0, 11.0};
+    for (std::size_t index = 0; index < corners.size(); ++index) {
+        standard.mask = {"standard", 2, 2, corners[index]};
+        const auto result = service.execute(standard);
+        QVERIFY2(result.succeeded(), result.message.c_str());
+        QCOMPARE(result.extraction->geometry.width, std::uint64_t{3});
+        QCOMPARE(result.extraction->geometry.height, std::uint64_t{2});
+        QCOMPARE(result.extraction->image->pixels->sample(0, 0).value,
+                 firstValues[index]);
+        QCOMPARE(result.extraction->image->pixels->sample(2, 1).value,
+                 firstValues[index] + 24.0);
+    }
+
+    rawviewer::application::BayerExtractRequest quad;
+    quad.source = makeBayerImage(8, 8);
+    quad.mask = {"quad-position", 4, 4, std::vector<std::uint8_t>(16, 0)};
+    quad.mask.selected[2 * 4 + 1] = 1; // source offset (1, 2)
+    const auto quadResult = service.execute(quad);
+    QVERIFY2(quadResult.succeeded(), quadResult.message.c_str());
+    QCOMPARE(quadResult.extraction->geometry.width, std::uint64_t{2});
+    QCOMPARE(quadResult.extraction->geometry.height, std::uint64_t{2});
+    QCOMPARE(quadResult.extraction->image->pixels->sample(0, 0).value, 21.0);
+    QCOMPARE(quadResult.extraction->image->pixels->sample(1, 1).value, 65.0);
+
+    rawviewer::application::BayerExtractRequest hex;
+    hex.source = makeBayerImage(16, 16);
+    hex.mask = {"hex-position", 8, 8, std::vector<std::uint8_t>(64, 0)};
+    hex.mask.selected[7 * 8 + 7] = 1; // source offset (7, 7)
+    const auto hexResult = service.execute(hex);
+    QVERIFY2(hexResult.succeeded(), hexResult.message.c_str());
+    QCOMPARE(hexResult.extraction->geometry.width, std::uint64_t{2});
+    QCOMPARE(hexResult.extraction->geometry.height, std::uint64_t{2});
+    QCOMPARE(hexResult.extraction->image->pixels->sample(0, 0).value, 77.0);
+    QCOMPARE(hexResult.extraction->image->pixels->sample(1, 1).value, 165.0);
+
+    auto specialSource = makeBayerImage(6, 4);
+    specialSource->metadata.bayerPattern = rawviewer::domain::BayerPattern::None;
+    rawviewer::application::BayerExtractRequest special;
+    special.source = specialSource;
+    special.mask = {"special", 3, 2, {0, 0, 1, 0, 0, 0}};
+    const auto specialResult = service.execute(special);
+    QVERIFY2(specialResult.succeeded(), specialResult.message.c_str());
+    QCOMPARE(specialResult.extraction->geometry.width, std::uint64_t{2});
+    QCOMPARE(specialResult.extraction->geometry.height, std::uint64_t{2});
+    QCOMPARE(specialResult.extraction->image->pixels->sample(0, 0).value, 2.0);
+    QCOMPARE(specialResult.extraction->image->pixels->sample(1, 1).value, 25.0);
+}
+
+void DocumentSessionTest::selectingEveryCellIsExactZeroCopyIdentity() {
+    auto source = makeBayerImage(5, 3);
+    auto grayscale = std::make_shared<std::vector<std::uint16_t>>(15);
+    std::iota(grayscale->begin(), grayscale->end(), std::uint16_t{0});
+    source->preview.width = 5;
+    source->preview.height = 3;
+    source->preview.grayscale16Storage = grayscale;
+    source->preview.grayscale16Pixels = grayscale->data();
+    source->preview.grayscale16StrideSamples = 5;
+
+    for (const std::uint32_t size : {2U, 4U, 8U}) {
+        rawviewer::application::BayerExtractRequest request;
+        request.source = source;
+        request.mask = {"all", size, size,
+            std::vector<std::uint8_t>(static_cast<std::size_t>(size) * size, 1)};
+        const auto result =
+            rawviewer::application::BayerExtractService().execute(request);
+        QVERIFY2(result.succeeded(), result.message.c_str());
+        QCOMPARE(result.extraction->geometry.width, std::uint64_t{5});
+        QCOMPARE(result.extraction->geometry.height, std::uint64_t{3});
+        QCOMPARE(result.extraction->image->pixels.get(), source->pixels.get());
+        QCOMPARE(result.extraction->image->preview.grayscale16Pixels,
+                 source->preview.grayscale16Pixels);
+        QCOMPARE(result.extraction->image->metadata.bayerPattern,
+                 source->metadata.bayerPattern);
+        const std::optional<rawviewer::domain::BayerCoordinate> source42 =
+            rawviewer::domain::BayerCoordinate{4, 2};
+        QCOMPARE(result.extraction->geometry.sourceCoordinate(4, 2), source42);
+        QCOMPARE(result.extraction->image->pixels->sample(4, 2).value, 24.0);
+    }
+
+    rawviewer::application::BayerExtractRequest channel;
+    channel.source = makeBayerImage(4096, 3072);
+    channel.mask = {"channel", 2, 2, {1, 0, 0, 0}};
+    const auto result =
+        rawviewer::application::BayerExtractService().execute(channel);
+    QVERIFY2(result.succeeded(), result.message.c_str());
+    QVERIFY(result.extraction->image->signalPreview);
+    QCOMPARE(result.extraction->image->signalPreview->width, 1024);
+    QCOMPARE(result.extraction->image->signalPreview->height, 768);
+    QVERIFY(result.extraction->image->preview.rgba.empty());
 }
 
 void DocumentSessionTest::extractsUnalignedRoiAndConvertsCoordinates() {
     rawviewer::application::BayerExtractRequest request;
     request.source = makeBayerImage(5, 5);
-    request.channel = rawviewer::domain::BayerChannel::Gr;
+    request.mask = {"Gr", 2, 2, {1, 0, 0, 0}};
     request.sourceRegion = rawviewer::application::PixelRegion{1, 1, 4, 4};
     const auto result =
         rawviewer::application::BayerExtractService().execute(request);
@@ -258,41 +390,37 @@ void DocumentSessionTest::extractsUnalignedRoiAndConvertsCoordinates() {
     const auto& geometry = result.extraction->geometry;
     QCOMPARE(geometry.width, std::uint64_t{2});
     QCOMPARE(geometry.height, std::uint64_t{2});
-    QCOMPARE(geometry.sourceOriginX, std::uint64_t{1});
-    QCOMPARE(geometry.sourceOriginY, std::uint64_t{2});
     const std::optional<rawviewer::domain::BayerCoordinate> source34 =
-        rawviewer::domain::BayerCoordinate{3, 4};
+        rawviewer::domain::BayerCoordinate{3, 3};
     const std::optional<rawviewer::domain::BayerCoordinate> channel11 =
         rawviewer::domain::BayerCoordinate{1, 1};
     QCOMPARE(geometry.sourceCoordinate(1, 1), source34);
-    QCOMPARE(geometry.channelCoordinate(3, 4), channel11);
-    QVERIFY(!geometry.channelCoordinate(2, 4));
+    QCOMPARE(geometry.outputCoordinate(3, 3), channel11);
+    QVERIFY(!geometry.outputCoordinate(2, 3));
     QVERIFY(!geometry.sourceCoordinate(2, 1));
-    QCOMPARE(result.extraction->image->pixels->sample(1, 1).value, 43.0);
+    QCOMPARE(result.extraction->image->pixels->sample(1, 1).value, 33.0);
 }
 
 void DocumentSessionTest::rejectsInvalidAndEmptyBayerRegions() {
     rawviewer::application::BayerExtractRequest request;
     request.source = makeBayerImage(5, 5);
-    request.channel = rawviewer::domain::BayerChannel::R;
     request.sourceRegion = rawviewer::application::PixelRegion{4, 4, 2, 1};
     auto result = rawviewer::application::BayerExtractService().execute(request);
     QVERIFY(!result.succeeded());
     QCOMPARE(QString::fromStdString(result.errorCode),
              QStringLiteral("bayer.invalid_region"));
 
-    request.channel = rawviewer::domain::BayerChannel::B;
+    request.mask.selected = {0, 0, 0, 0};
     request.sourceRegion = rawviewer::application::PixelRegion{0, 0, 1, 1};
     result = rawviewer::application::BayerExtractService().execute(request);
     QVERIFY(!result.succeeded());
     QCOMPARE(QString::fromStdString(result.errorCode),
-             QStringLiteral("bayer.empty_channel"));
+             QStringLiteral("bayer.invalid_mask"));
 }
 
 void DocumentSessionTest::cancelsBayerExtraction() {
     rawviewer::application::BayerExtractRequest request;
     request.source = makeBayerImage(5, 5);
-    request.channel = rawviewer::domain::BayerChannel::R;
     request.cancellation = std::make_shared<std::atomic_bool>(true);
     const auto result =
         rawviewer::application::BayerExtractService().execute(request);

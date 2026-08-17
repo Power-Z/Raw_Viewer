@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = "v0.3.0-preview.1",
+    [string]$Version = "v0.3.0-preview.2",
     [string]$BuildDirectory = "build/windows-msvc-release",
     [string]$OutputDirectory = "artifacts",
     [string]$QtRoot = $env:RAWVIEWER_QT_ROOT,

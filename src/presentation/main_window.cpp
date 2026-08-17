@@ -25,8 +25,10 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenuBar>
+#include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSignalBlocker>
 #include <QSettings>
 #include <QSpinBox>
@@ -39,6 +41,7 @@
 #include <QtConcurrent>
 
 #include <filesystem>
+#include <algorithm>
 
 namespace rawviewer::presentation {
 namespace {
@@ -56,10 +59,12 @@ QString metadataSummary(const application::ImageMetadata& metadata) {
 MainWindow::MainWindow(
     std::shared_ptr<const application::OpenImageService> openService,
     std::shared_ptr<const application::IBayerPlaneExporter> bayerExporter,
+    std::shared_ptr<application::IRecentDocumentStore> recentDocuments,
     QWidget* parent)
     : QMainWindow(parent),
       openService_(std::move(openService)),
-      bayerExporter_(std::move(bayerExporter)) {
+      bayerExporter_(std::move(bayerExporter)),
+      recentDocuments_(std::move(recentDocuments)) {
     setWindowTitle(tr("Raw Viewer"));
     resize(1440, 900);
     pixelInfoDialog_ = new PixelInfoDialog(this);
@@ -112,10 +117,6 @@ MainWindow::MainWindow(
             &BayerExtractDialog::showOriginalRequested,
             this,
             &MainWindow::showOriginalImage);
-    connect(bayerExtractDialog_,
-            &BayerExtractDialog::exportRequested,
-            this,
-            &MainWindow::exportBayerCsv);
     connect(pixelStatisticsDialog_,
             &PixelStatisticsDialog::modeChanged,
             this,
@@ -184,6 +185,10 @@ void MainWindow::createMenus() {
             openPath(path);
         }
     });
+    recentFilesMenu_ = fileMenu->addMenu(tr("Recent Files(&R)"));
+    recentFilesMenu_->setObjectName(QStringLiteral("recentFilesMenu"));
+    connect(recentFilesMenu_, &QMenu::aboutToShow,
+            this, &MainWindow::refreshRecentFilesMenu);
     fileMenu->addSeparator();
     fileMenu->addAction(tr("退出"), QKeySequence::Quit, this, &QWidget::close);
 
@@ -244,7 +249,7 @@ void MainWindow::createMenus() {
         QMessageBox::about(
             this,
             tr("关于 Raw Viewer"),
-            tr("<b>Raw Viewer 0.3.0-preview.1</b><br>"
+            tr("<b>Raw Viewer 0.3.0-preview.2</b><br>"
                "第二阶段：非破坏显示处理、Pixel Info、Bayer Extract 与 Pixel Statistics。<br>"
                "输入文件和原始像素始终保持只读。"));
     });
@@ -486,6 +491,91 @@ domain::RawDescriptor MainWindow::currentRawDescriptor() const {
     return descriptor;
 }
 
+void MainWindow::applyRawDescriptor(
+    const domain::RawDescriptor& descriptor) {
+    widthSpin_->setValue(static_cast<int>(std::min<std::uint64_t>(
+        descriptor.width, static_cast<std::uint64_t>(widthSpin_->maximum()))));
+    heightSpin_->setValue(static_cast<int>(std::min<std::uint64_t>(
+        descriptor.height, static_cast<std::uint64_t>(heightSpin_->maximum()))));
+    headerSpin_->setValue(static_cast<int>(std::min<std::uint64_t>(
+        descriptor.headerBytes, static_cast<std::uint64_t>(headerSpin_->maximum()))));
+    strideSpin_->setValue(static_cast<int>(std::min<std::uint64_t>(
+        descriptor.rowStrideBytes, static_cast<std::uint64_t>(strideSpin_->maximum()))));
+    switch (descriptor.scalarType) {
+    case domain::ScalarType::UInt8: scalarCombo_->setCurrentIndex(0); break;
+    case domain::ScalarType::UInt16: scalarCombo_->setCurrentIndex(1); break;
+    case domain::ScalarType::UInt32: scalarCombo_->setCurrentIndex(2); break;
+    case domain::ScalarType::Float32: scalarCombo_->setCurrentIndex(3); break;
+    }
+    endianCombo_->setCurrentIndex(
+        descriptor.byteOrder == domain::ByteOrder::LittleEndian ? 0 : 1);
+    switch (descriptor.bayerPattern) {
+    case domain::BayerPattern::RGGB: bayerCombo_->setCurrentIndex(0); break;
+    case domain::BayerPattern::BGGR: bayerCombo_->setCurrentIndex(1); break;
+    case domain::BayerPattern::GRBG: bayerCombo_->setCurrentIndex(2); break;
+    case domain::BayerPattern::GBRG: bayerCombo_->setCurrentIndex(3); break;
+    case domain::BayerPattern::None: bayerCombo_->setCurrentIndex(4); break;
+    }
+    sensorBlackSpin_->setValue(descriptor.sensorBlackLevel);
+}
+
+void MainWindow::refreshRecentFilesMenu() {
+    recentFilesMenu_->clear();
+    const auto documents = recentDocuments_
+        ? recentDocuments_->load()
+        : std::vector<application::RecentDocument>{};
+    if (documents.empty()) {
+        auto* empty = recentFilesMenu_->addAction(tr("暂无最近文档"));
+        empty->setEnabled(false);
+        return;
+    }
+    int position = 1;
+    for (const auto& document : documents) {
+#ifdef _WIN32
+        const QString path = QString::fromStdWString(document.path.wstring());
+#else
+        const QString path = QString::fromStdString(document.path.string());
+#endif
+        const bool exists = QFileInfo(path).isFile();
+        const QString label = QStringLiteral("&%1  %2%3")
+            .arg(position++)
+            .arg(QDir::toNativeSeparators(path),
+                 exists ? QString() : tr("  （文件已删除）"));
+        auto* action = recentFilesMenu_->addAction(label);
+        action->setEnabled(exists);
+        action->setToolTip(tr("%1\n%2 × %3 · %4 · %5 · %6 · Skip %7")
+            .arg(QDir::toNativeSeparators(path))
+            .arg(document.rawDescriptor.width)
+            .arg(document.rawDescriptor.height)
+            .arg(QString::fromLatin1(domain::toString(
+                document.rawDescriptor.scalarType)))
+            .arg(QString::fromLatin1(domain::toString(
+                document.rawDescriptor.byteOrder)))
+            .arg(QString::fromLatin1(domain::toString(
+                document.rawDescriptor.bayerPattern)))
+            .arg(document.rawDescriptor.headerBytes));
+        if (exists) {
+            connect(action, &QAction::triggered, this,
+                    [this, document] { openRecentDocument(document); });
+        }
+    }
+    recentFilesMenu_->addSeparator();
+    auto* clearAction = recentFilesMenu_->addAction(tr("清除最近文档记录"));
+    connect(clearAction, &QAction::triggered, this, [this] {
+        if (recentDocuments_) recentDocuments_->clear();
+    });
+}
+
+void MainWindow::openRecentDocument(
+    const application::RecentDocument& document) {
+    applyRawDescriptor(document.rawDescriptor);
+#ifdef _WIN32
+    openPath(QString::fromStdWString(document.path.wstring()));
+#else
+    openPath(QString::fromStdString(document.path.string()));
+#endif
+}
+
 void MainWindow::openPath(const QString& path) {
     const QFileInfo info(path);
     if (info.isDir()) {
@@ -525,14 +615,15 @@ void MainWindow::beginOpen(const QString& path) {
         tr("正在加载 %1…").arg(QFileInfo(path).fileName()));
     statusBar()->showMessage(QDir::toNativeSeparators(path));
 
+    const auto rawDescriptor = currentRawDescriptor();
     application::OpenImageRequest request;
     request.path = std::filesystem::path(path.toStdWString());
-    request.flatRawDescriptor = currentRawDescriptor();
+    request.flatRawDescriptor = rawDescriptor;
     request.cancellation = token;
 
     auto* watcher = new QFutureWatcher<application::DecodeResult>(this);
     connect(watcher, &QFutureWatcher<application::DecodeResult>::finished,
-            this, [this, watcher, generation, path] {
+            this, [this, watcher, generation, path, rawDescriptor] {
         const auto result = watcher->result();
         watcher->deleteLater();
         if (generation != generation_) {
@@ -553,6 +644,10 @@ void MainWindow::beginOpen(const QString& path) {
         pathEdit_->setText(directory);
         fileTree_->setRootIndex(fileModel_->setRootPath(directory));
         showDecoded(result.image);
+        if (recentDocuments_) {
+            recentDocuments_->remember({
+                std::filesystem::path(path.toStdWString()), rawDescriptor});
+        }
         taskLabel_->setText(tr("就绪"));
         statusBar()->showMessage(tr("已打开 %1").arg(QFileInfo(path).fileName()), 4000);
     });
@@ -578,13 +673,14 @@ void MainWindow::showDecoded(
     updateUndoActions();
     pixelInfoAction_->setEnabled(true);
     pixelInfoButton_->setEnabled(true);
-    const bool supportsBayer =
-        displaySource_->metadata.kind != application::ImageKind::Standard &&
+    const bool supportsRaw =
+        displaySource_->metadata.kind != application::ImageKind::Standard;
+    const bool supportsBayerStatistics = supportsRaw &&
         displaySource_->metadata.bayerPattern != domain::BayerPattern::None;
-    bayerExtractAction_->setEnabled(supportsBayer);
-    bayerExtractButton_->setEnabled(supportsBayer);
-    statisticsAction_->setEnabled(supportsBayer);
-    statisticsButton_->setEnabled(supportsBayer);
+    bayerExtractAction_->setEnabled(supportsRaw);
+    bayerExtractButton_->setEnabled(supportsRaw);
+    statisticsAction_->setEnabled(supportsBayerStatistics);
+    statisticsButton_->setEnabled(supportsBayerStatistics);
     imageLabel_->setText(metadataSummary(currentImage_->metadata));
     setWindowTitle(QStringLiteral("%1 — Raw Viewer")
                        .arg(QString::fromStdString(currentImage_->metadata.camera)
@@ -711,9 +807,9 @@ void MainWindow::flushCoordinateUpdate() {
             static_cast<std::uint64_t>(pendingCoordinateY_));
         if (source) {
             coordinateLabel_->setText(
-                tr("通道 %1 (%2, %3) → Source (%4, %5) | Raw %6 | Display %7")
-                    .arg(QString::fromLatin1(domain::toString(
-                        bayerExtraction_->geometry.channel)))
+                tr("Extract %1 (%2, %3) → Source (%4, %5) | Raw %6 | Display %7")
+                    .arg(QString::fromStdString(
+                        bayerExtraction_->geometry.mask.name))
                     .arg(pendingCoordinateX_)
                     .arg(pendingCoordinateY_)
                     .arg(source->x)
@@ -760,10 +856,11 @@ void MainWindow::openPixelInfo() {
 
 void MainWindow::openBayerExtract() {
     if (!documentSession_ ||
-        documentSession_->original()->metadata.bayerPattern ==
-            domain::BayerPattern::None) {
+        documentSession_->original()->metadata.kind ==
+            application::ImageKind::Standard) {
         return;
     }
+    bayerExtractDialog_->setSource(&documentSession_->original()->metadata);
     bayerExtractDialog_->show();
     bayerExtractDialog_->raise();
     bayerExtractDialog_->activateWindow();
@@ -903,8 +1000,8 @@ void MainWindow::beginBayerExtraction() {
     const auto generation = ++bayerGeneration_;
     const auto request = bayerExtractDialog_->request(
         documentSession_->original(), token);
-    bayerExtractDialog_->setBusy(true, tr("正在生成单通道预览…"));
-    taskLabel_->setText(tr("正在提取 Bayer 通道…"));
+    bayerExtractDialog_->setBusy(true, tr("正在生成 Bayer 掩码预览…"));
+    taskLabel_->setText(tr("正在执行 Bayer pattern 提取…"));
 
     auto* watcher =
         new QFutureWatcher<application::BayerExtractResult>(this);
@@ -935,10 +1032,8 @@ void MainWindow::beginBayerExtraction() {
         coordinateLabel_->setText(tr("坐标 —"));
         bayerExtractDialog_->setResult(bayerExtraction_.get());
         renderCurrentDisplay(false);
-        taskLabel_->setText(
-            tr("已显示 %1 通道")
-                .arg(QString::fromLatin1(domain::toString(
-                    bayerExtraction_->geometry.channel))));
+        taskLabel_->setText(tr("已显示 %1 提取结果")
+            .arg(QString::fromStdString(bayerExtraction_->geometry.mask.name)));
     });
     const auto service = bayerExtractService_;
     watcher->setFuture(QtConcurrent::run([service, request] {
@@ -961,12 +1056,14 @@ void MainWindow::exportBayerCsv() {
     if (!bayerExtraction_ || !bayerExporter_) {
         return;
     }
-    const QString suggested = QStringLiteral("bayer_%1.csv").arg(
-        QString::fromLatin1(domain::toString(
-            bayerExtraction_->geometry.channel)));
+    QString safeName = QString::fromStdString(
+        bayerExtraction_->geometry.mask.name).toLower();
+    safeName.replace(QRegularExpression(QStringLiteral("[^a-z0-9_-]+")),
+                     QStringLiteral("_"));
+    const QString suggested = QStringLiteral("bayer_%1.csv").arg(safeName);
     const QString path = QFileDialog::getSaveFileName(
         this,
-        tr("导出 Bayer 通道 CSV"),
+        tr("导出 Bayer pattern CSV"),
         QDir(pathEdit_->text()).filePath(suggested),
         tr("CSV 文件 (*.csv)"));
     if (path.isEmpty()) {

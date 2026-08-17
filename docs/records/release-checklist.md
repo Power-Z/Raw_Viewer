@@ -100,3 +100,58 @@
 - 结论：有条件通过，仅作为 Preview 预发布
 - 未完成项：代码签名、正式许可证法律复核、独立干净 Windows 验收、安装器；正式稳定版前完成
 - 证据：Debug/Release CTest、实际 RAW 黄金值测试、便携包模块路径与启动冒烟测试、GitHub Release assets
+
+---
+
+## 版本：v0.3.0-preview.2
+
+- 发布负责人：Power-Z / Codex
+- commit/tag：`v0.3.0-preview.2` 所指向的发布提交
+- 日期：2026-08-18
+
+### 范围与质量
+
+- [x] V0.4～V0.7.1、Recent Files 和发布需求已进入追踪矩阵
+- [x] Debug/Release CTest 4/4 通过
+- [x] Bayer Extract 正常、部分边缘、全选恒等、取消和坐标映射测试通过
+- [x] Pixel Info 连续跟随、500/500 可见像素、RGB 自动值和 RGGB 遮罩测试通过
+- [x] 11776×8842 实际 RAW 全图统计和 Bayer Extract 性能回归通过
+- [x] 未新增未接受的高影响风险，现有风险与技术债务已保留
+
+### 数据与安全
+
+- [x] Git diff 与暂存清单不包含本地 RAW、构建目录、令牌、密钥或日志
+- [x] `.gitignore` 继续排除 `Data/`、`artifacts/`、`*.raw`、`*.bin` 和 `*.dng`
+- [x] 实际样本只在清单中记录摘要、参数和授权，不进入 GitHub
+- [x] Qt、LibRaw、MSVC Runtime 的 notices 与许可证进入便携包
+- [x] GPL demosaic packs 未链接
+- [ ] 未执行独立依赖漏洞扫描或正式法律审查
+
+### 构建与制品
+
+- [x] MSVC Debug/Release 构建与测试通过
+- [x] 记录 Visual Studio 2022、Qt 6.8.3、LibRaw 0.22.2 和 CMake 基线
+- [x] Windows x64 便携包通过启动并保持响应测试
+- [x] 包含 Qt DLL、LibRaw、MSVC CRT、`platforms/qwindows.dll` 和许可证
+- [x] 生成 ZIP 及独立 SHA-256 校验文件
+- [ ] Preview 包未签名，未提供安装/升级/卸载程序
+- [ ] 未在独立干净 Windows 虚拟机上复测
+
+### 文档与发布
+
+- [x] README、用户指南、Release Notes、Changelog、需求追踪和项目状态已更新
+- [x] 应用版本、About、打包脚本和 `v0.3.0-preview.2` 一致
+- [x] 源码提交与 tag 已推送到 GitHub
+- [x] GitHub prerelease 包含 Windows x64 ZIP 与 SHA-256 assets
+
+### 恢复
+
+- [x] `v0.3.0-preview.1` 源码标签和 Release 仍可获取
+- [x] 回滚方式为在独立目录解压 Preview 1，不覆盖当前便携包
+- [x] 源码位于 GitHub 与本地仓库；测试 RAW 仍在独立受控存储
+
+### 发布结论
+
+- 结论：有条件通过，仅作为 Preview 预发布
+- 未完成项：代码签名、正式许可证法律复核、独立干净 Windows 验收、安装器；正式稳定版前完成
+- 证据：Debug/Release CTest、真实 RAW 黄金值、Bayer Extract 性能记录、离屏 UI 测试、便携包启动测试、GitHub Release assets

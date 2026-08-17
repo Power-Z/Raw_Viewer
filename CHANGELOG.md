@@ -4,6 +4,33 @@
 
 ## [Unreleased]
 
+## [0.3.0-preview.2] - 2026-08-18
+
+### Added
+
+- V0.4 Bayer Channel Extract 支持 2×2、4×4、8×8 与 1×1～16×16 自定义重复掩码、行优先/列优先紧凑排列，以及配置命名、保存、加载和删除。
+- 非整倍数图像或 ROI 在提取前提示确认，并只保留右侧/底部部分单元中真实存在的已选像素。
+- V0.5 File 菜单增加 `Recent Files`，保存最近十个成功打开文档及完整 RAW 加载配置，支持 MRU 去重、缺失文件标记和清除记录。
+
+### Changed
+
+- Bayer 提取结果改为通用只读坐标映射；完整 RAW 不复制，CSV 使用输出坐标并跳过矩形补位和边缘无效位置。
+- Bayer Extract 对话框更新为卡片式矩阵编辑界面，提供全选、清空、反选和选中数量反馈。
+- V0.6 明确 Bayer Extract 为基于原图的周期位置采样工具，支持标准 Bayer 2×2、Quad Bayer 4×4、Hex Bayer 8×8 及无标准 Bayer 元数据的特殊 pattern。
+- V0.6 精简 Bayer Extract：固定全图、每次从 original source 提取，删除 ROI、选中数量和 CSV 入口；矩阵改为外部坐标轴并随 block 尺寸动态调整窗口。
+- V0.6.1 修复 Bayer Extract 窗口由大 pattern 切回小 pattern 时不缩小，以及全选在非整倍数边缘产生黑色补位、降采样预览看起来不同于原图的问题。
+- Bayer Extract 增加全选零拷贝恒等路径、单位置坐标预计算，并将有界 signal preview 从 2048 调整为 1024，移除后台重复 RGBA 生成。
+- Bayer Extract 主操作按钮由 `Extract & display` 简化为 `Extract`。
+- V0.6.2 将 Bayer Extract 改为更小的双卡片布局：矩阵区提高到约 2/5，Pattern 标题固定为 1.5 倍字体行高，预设默认隐藏自定义编辑栏。
+- Bayer Extract 的排列选项简化为 `Row-major` / `Column-major` 并增加 `?` 说明；矩阵单元改为 24×24 无圆角方块和 3 px 间距。
+- V0.6.3 将 packing 帮助改为 18×18 无边框提示按钮，并删除 Bayer Extract 顶部 Source 信息行。
+- Bayer Extract 矩阵单元按 pattern 最大边自适应为 48/36/24/12 px，使 2×2 更醒目，同时控制 8×8 和自定义大矩阵的窗口尺寸。
+- V0.7 RAW 像素标注删除 `Raw` 前缀、彩色文字和半透明底板，改为按显示灰度自动选择黑字或白字，字高约为显示像素高度的 1/7。
+- Pixel Info 默认关闭 Bayer mesh；拖拽期间和连续滚轮缩放的中间帧暂停标签查询与绘制，停止交互 80 ms 后恢复，以提升大倍率标注下的流畅度。
+- V0.7.1 取消交互期间暂停标注和 200 标签抽样上限；达到 40 px/像素后标注全部可见像素，并在拖拽、缩放的每一帧跟随图像。
+- Pixel Info 精简为像素值、Bayer mesh、Bayer pattern 三项；RAW 自动显示原始值，标准图片自动显示 RGB 值，像素值字体调整为 1/6 高。
+- Bayer mesh 改为 R/Gr/Gb/B 半透明四色遮罩（两种绿色不同），Pattern 英文字样以 1/7 高字体显示在像素右下角。
+
 ## [0.3.0-preview.1] - 2026-08-16
 
 ### Added

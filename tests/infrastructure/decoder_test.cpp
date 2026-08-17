@@ -2,12 +2,14 @@
 #include "infrastructure/camera_raw_decoder.h"
 #include "infrastructure/flat_raw_decoder.h"
 #include "infrastructure/qt_image_decoder.h"
+#include "infrastructure/qt_recent_document_store.h"
 
 #include "application/bayer_extract.h"
 #include "application/pixel_info.h"
 #include "application/pixel_statistics.h"
 
 #include <QFile>
+#include <QElapsedTimer>
 #include <QImage>
 #include <QTemporaryDir>
 #include <QTest>
@@ -52,6 +54,7 @@ private slots:
     void cameraContainerWinsBySignature();
     void preservesStandardImageRgbForPixelInfo();
     void exportsExtractedBayerChannelAsCsv();
+    void remembersTenSuccessfulDocumentConfigurations();
     void verifiesApprovedFlatSampleWhenConfigured();
     void verifiesApprovedCameraSampleWhenConfigured();
 };
@@ -266,13 +269,16 @@ void DecoderTest::exportsExtractedBayerChannelAsCsv() {
     const QString sourcePath = directory.filePath("source.raw");
     QFile sourceFile(sourcePath);
     QVERIFY(sourceFile.open(QIODevice::WriteOnly));
-    const QByteArray bytes = QByteArray::fromRawData("\0\1\2\3\4\5\6\7", 8);
+    QByteArray bytes;
+    for (char value = 0; value < 15; ++value) {
+        bytes.append(value);
+    }
     QCOMPARE(sourceFile.write(bytes), bytes.size());
     sourceFile.close();
 
     rawviewer::domain::RawDescriptor descriptor;
-    descriptor.width = 4;
-    descriptor.height = 2;
+    descriptor.width = 5;
+    descriptor.height = 3;
     descriptor.scalarType = rawviewer::domain::ScalarType::UInt8;
     descriptor.bayerPattern = rawviewer::domain::BayerPattern::RGGB;
     rawviewer::infrastructure::FlatRawDecoder decoder;
@@ -281,7 +287,7 @@ void DecoderTest::exportsExtractedBayerChannelAsCsv() {
 
     rawviewer::application::BayerExtractRequest extractRequest;
     extractRequest.source = decoded.image;
-    extractRequest.channel = rawviewer::domain::BayerChannel::Gr;
+    extractRequest.mask = {"Gr", 2, 2, {0, 1, 0, 0}};
     const auto extracted =
         rawviewer::application::BayerExtractService().execute(extractRequest);
     QVERIFY2(extracted.succeeded(), extracted.message.c_str());
@@ -294,14 +300,69 @@ void DecoderTest::exportsExtractedBayerChannelAsCsv() {
     rawviewer::infrastructure::BayerCsvExporter exporter;
     const auto exported = exporter.exportCsv(exportRequest);
     QVERIFY2(exported.succeeded, exported.message.c_str());
-    QCOMPARE(exported.exportedSamples, std::uint64_t{2});
+    QCOMPARE(exported.exportedSamples, std::uint64_t{4});
 
     QFile csv(csvPath);
     QVERIFY(csv.open(QIODevice::ReadOnly | QIODevice::Text));
     QCOMPARE(csv.readAll(),
-             QByteArray("channel_x,channel_y,source_x,source_y,value\n"
+             QByteArray("output_x,output_y,source_x,source_y,value\n"
                         "0,0,1,0,1\n"
-                        "1,0,3,0,3\n"));
+                        "1,0,3,0,3\n"
+                        "0,1,1,2,11\n"
+                        "1,1,3,2,13\n"));
+}
+
+void DecoderTest::remembersTenSuccessfulDocumentConfigurations() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString settingsPath = directory.filePath("recent-files.ini");
+    rawviewer::infrastructure::QtRecentDocumentStore store(settingsPath);
+
+    for (int index = 0; index < 12; ++index) {
+        rawviewer::application::RecentDocument document;
+        document.path = nativePath(directory.filePath(
+            QStringLiteral("image-%1.raw").arg(index)));
+        document.rawDescriptor.width = static_cast<std::uint64_t>(100 + index);
+        document.rawDescriptor.height = static_cast<std::uint64_t>(200 + index);
+        document.rawDescriptor.headerBytes =
+            std::uint64_t{9007199254740992} + static_cast<std::uint64_t>(index);
+        document.rawDescriptor.rowStrideBytes = 4096 + index;
+        document.rawDescriptor.scalarType = rawviewer::domain::ScalarType::UInt32;
+        document.rawDescriptor.byteOrder = rawviewer::domain::ByteOrder::BigEndian;
+        document.rawDescriptor.bayerPattern = rawviewer::domain::BayerPattern::GBRG;
+        document.rawDescriptor.sensorBlackLevel = 64.5 + index;
+        store.remember(document);
+    }
+
+    auto recent = store.load();
+    QCOMPARE(recent.size(), std::size_t{10});
+    QCOMPARE(recent.front().rawDescriptor.width, std::uint64_t{111});
+    QCOMPARE(recent.back().rawDescriptor.width, std::uint64_t{102});
+    QCOMPARE(recent.front().rawDescriptor.headerBytes,
+             std::uint64_t{9007199254741003});
+    QCOMPARE(recent.front().rawDescriptor.scalarType,
+             rawviewer::domain::ScalarType::UInt32);
+    QCOMPARE(recent.front().rawDescriptor.byteOrder,
+             rawviewer::domain::ByteOrder::BigEndian);
+    QCOMPARE(recent.front().rawDescriptor.bayerPattern,
+             rawviewer::domain::BayerPattern::GBRG);
+    QCOMPARE(recent.front().rawDescriptor.sensorBlackLevel, 75.5);
+
+    auto reopened = recent[5];
+    reopened.rawDescriptor.width = 11776;
+    reopened.rawDescriptor.height = 8842;
+    store.remember(reopened);
+    recent = store.load();
+    QCOMPARE(recent.size(), std::size_t{10});
+    QCOMPARE(recent.front().path, reopened.path);
+    QCOMPARE(recent.front().rawDescriptor.width, std::uint64_t{11776});
+    QCOMPARE(std::count_if(recent.begin(), recent.end(),
+        [&reopened](const rawviewer::application::RecentDocument& item) {
+            return item.path == reopened.path;
+        }), std::ptrdiff_t{1});
+
+    store.clear();
+    QVERIFY(store.load().empty());
 }
 
 void DecoderTest::verifiesApprovedFlatSampleWhenConfigured() {
@@ -343,6 +404,41 @@ void DecoderTest::verifiesApprovedFlatSampleWhenConfigured() {
     QCOMPARE(result.image->pixels->sample(0, 1).value, 23734.0);
     QCOMPARE(result.image->pixels->sample(124, 92).value, 4142.0);
     QCOMPARE(result.image->pixels->sample(11775, 8841).value, 4219.0);
+
+    rawviewer::application::BayerExtractRequest identityRequest;
+    identityRequest.source = result.image;
+    identityRequest.mask = {
+        "all-8x8", 8, 8, std::vector<std::uint8_t>(64, 1)};
+    QElapsedTimer identityTimer;
+    identityTimer.start();
+    const auto identity =
+        rawviewer::application::BayerExtractService().execute(identityRequest);
+    const auto identityMilliseconds = identityTimer.elapsed();
+    QVERIFY2(identity.succeeded(), identity.message.c_str());
+    QCOMPARE(identity.extraction->geometry.width, std::uint64_t{11776});
+    QCOMPARE(identity.extraction->geometry.height, std::uint64_t{8842});
+    QCOMPARE(identity.extraction->image->pixels.get(), result.image->pixels.get());
+    QCOMPARE(identity.extraction->image->preview.grayscale16Pixels,
+             result.image->preview.grayscale16Pixels);
+
+    rawviewer::application::BayerExtractRequest channelRequest;
+    channelRequest.source = result.image;
+    channelRequest.mask = {"top-left", 2, 2, {1, 0, 0, 0}};
+    QElapsedTimer channelTimer;
+    channelTimer.start();
+    const auto channel =
+        rawviewer::application::BayerExtractService().execute(channelRequest);
+    const auto channelMilliseconds = channelTimer.elapsed();
+    QVERIFY2(channel.succeeded(), channel.message.c_str());
+    QCOMPARE(channel.extraction->geometry.width, std::uint64_t{5888});
+    QCOMPARE(channel.extraction->geometry.height, std::uint64_t{4421});
+    QVERIFY(channel.extraction->image->signalPreview);
+    QCOMPARE(channel.extraction->image->signalPreview->width, 1024);
+    QCOMPARE(channel.extraction->image->signalPreview->height, 769);
+    QCOMPARE(channel.extraction->image->pixels->sample(62, 46).value, 4142.0);
+    qInfo("V0.6.1 real RAW extract: all-selected=%lld ms, single-position=%lld ms",
+          static_cast<long long>(identityMilliseconds),
+          static_cast<long long>(channelMilliseconds));
 
     rawviewer::application::PixelStatisticsRequest statisticsRequest;
     statisticsRequest.source = result.image;

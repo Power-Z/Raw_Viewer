@@ -32,3 +32,4 @@
 | 2026-07-31 | Power-Z / Codex | V0.3 引入文档 revision、不可变预览源和五步历史；增加 LibRaw 黑电平语义回归保护 |
 | 2026-07-31 | Power-Z / Codex | P2-03 覆盖四种 Bayer pattern，并用真实 RGGB 样本完成状态栏与 overlay 验收，降低 R-004 概率 |
 | 2026-08-01 | Power-Z / Codex | P2-04 以只读通道视图避免整幅副本，补齐坐标/奇数 ROI 测试并完成真实 RGGB R/B 通道窗口验收 |
+| 2026-08-18 | Power-Z / Codex | Preview 2 发布复审：R-006 继续保持 Open（正式法律复核未完成）；R-008 通过忽略规则、显式暂存和制品检查控制；未提交真实 RAW |

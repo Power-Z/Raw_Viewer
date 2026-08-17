@@ -35,6 +35,7 @@ add_library(rawviewer_infrastructure STATIC
     flat_raw_decoder.cpp
     local_logger.cpp
     qt_image_decoder.cpp
+    qt_recent_document_store.cpp
 )
 
 target_include_directories(rawviewer_infrastructure PUBLIC ${PROJECT_SOURCE_DIR}/src)

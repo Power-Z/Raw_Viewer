@@ -4,6 +4,7 @@
 #include "application/document_session.h"
 #include "application/open_image_service.h"
 #include "application/pixel_statistics.h"
+#include "application/recent_documents.h"
 
 #include <QMainWindow>
 
@@ -16,6 +17,7 @@ class QDoubleSpinBox;
 class QFileSystemModel;
 class QLabel;
 class QLineEdit;
+class QMenu;
 class QPushButton;
 class QAction;
 class QSpinBox;
@@ -37,6 +39,7 @@ public:
     explicit MainWindow(
                         std::shared_ptr<const application::OpenImageService> openService,
                         std::shared_ptr<const application::IBayerPlaneExporter> bayerExporter,
+                        std::shared_ptr<application::IRecentDocumentStore> recentDocuments,
                         QWidget* parent = nullptr);
     ~MainWindow() override;
 
@@ -50,6 +53,9 @@ private:
     void createMenus();
     void createStatusBar();
     domain::RawDescriptor currentRawDescriptor() const;
+    void applyRawDescriptor(const domain::RawDescriptor& descriptor);
+    void refreshRecentFilesMenu();
+    void openRecentDocument(const application::RecentDocument& document);
     void beginOpen(const QString& path);
     void showDecoded(std::shared_ptr<const application::DecodedImage> image);
     void setTheme(const QString& name);
@@ -72,6 +78,7 @@ private:
 
     std::shared_ptr<const application::OpenImageService> openService_;
     std::shared_ptr<const application::IBayerPlaneExporter> bayerExporter_;
+    std::shared_ptr<application::IRecentDocumentStore> recentDocuments_;
     application::BayerExtractService bayerExtractService_;
     application::PixelStatisticsService pixelStatisticsService_;
     std::shared_ptr<const application::DecodedImage> currentImage_;
@@ -113,6 +120,7 @@ private:
     QAction* pixelInfoAction_ = nullptr;
     QAction* bayerExtractAction_ = nullptr;
     QAction* statisticsAction_ = nullptr;
+    QMenu* recentFilesMenu_ = nullptr;
     BayerExtractDialog* bayerExtractDialog_ = nullptr;
     PixelInfoDialog* pixelInfoDialog_ = nullptr;
     PixelStatisticsDialog* pixelStatisticsDialog_ = nullptr;

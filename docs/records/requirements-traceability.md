@@ -25,6 +25,14 @@
 | TOOL-001 | Pixel Info 信号、mesh、pattern 标注 | 架构 10.3、12；`queryPixelInfo` + `PixelInfoDialog`；四 pattern 测试与 `CAMERA-HB-X2D-001` UI 验收 | P2-03 | Verified |
 | TOOL-002 | Pixel Statistics：Status、Horizontal Box、Vertical Box、Line，WB 预留；两次点击选择、原始 Bayer 分通道、后台进度/取消、统计卡片和图表 | 架构 11；`PixelStatisticsService`、`PixelStatisticsDialog`、`ImageViewport`；application/UI 黄金测试及 `FLAT-HB-X2D-001` 全图统计 | P2-05 | Verified |
 | TOOL-003 | Bayer pattern 特定像素提取 | 架构 12；`BayerExtractService` + `BayerExtractDialog` + `BayerCsvExporter`；odd-size/ROI/CSV tests 与 `CAMERA-HB-X2D-001` UI 验收 | P2-04 | Verified |
+| TOOL-004 | V0.4 n×m Bayer Extract：矩阵选择、行/列优先、部分边缘、配置持久化与现代化 UI | `docs/plans/v0.4-bayer-mask-extract.md`；通用 `BayerMaskPattern`/只读 `BayerPlaneGeometry`；应用层行列优先与边缘黄金测试、CSV 和 UI 持久化测试 | V0.4-01～04 | Verified |
+| FILE-002 | V0.5 Recent Files：最近十个成功文档、加载配置恢复、缺失文件处理 | `docs/plans/v0.5-recent-files.md`；`IRecentDocumentStore` + `QtRecentDocumentStore` + `MainWindow::refreshRecentFilesMenu`；MRU/去重/64 位配置/缺失文件 UI/清除测试 | V0.5-01～02 | Verified |
+| TOOL-005 | V0.6 Bayer Position Extract：标准/Quad/Hex/特殊 pattern、固定原图全图采样、精简动态 UI | `docs/plans/v0.6-bayer-position-extract.md`；`BayerExtractService` + `BayerExtractDialog` + `MainWindow::beginBayerExtraction`；2×2 四角、4×4、8×8、None pattern 与 UI 结构测试 | V0.6-01～09 | Verified |
+| TOOL-006 | V0.6.1 Bayer Extract：窗口双向缩放、全选恒等显示和提取性能 | `docs/plans/v0.6.1-bayer-extract-performance.md`；identity zero-copy、single-position axis cache、1024 signal preview；全选/非整倍数/预览/UI 往返尺寸及 11776×8842 实图测试 | V0.6.1-01～04 | Verified |
+| TOOL-007 | V0.6.2 Bayer Extract：矩阵区约 2/5、Pattern 固定行高、自定义按需展开、方形紧密网格、英文排列帮助和整体缩小 | `docs/plans/v0.6.2-bayer-extract-ui.md`；`BayerExtractDialog` 双卡片布局；标题/Custom/网格/尺寸/持久化 UI 自动化测试 | V0.6.2-01～06 | Verified |
+| TOOL-008 | V0.6.3 Bayer Extract：常规小型帮助提示、自适应方形单元并删除顶部 Source 信息 | `docs/plans/v0.6.3-bayer-extract-ui.md`；`BayerExtractDialog::rebuildMatrix/adjustDialogSize/setSource`；2×2/4×4/8×8/Custom 尺寸及标签 UI 测试 | V0.6.3-01～03 | Verified |
+| VIEW-004 | V0.7 RAW 像素标注：纯数值、黑白自适应、默认无网格、1/7 字高及交互性能优化 | `docs/plans/v0.7-pixel-value-overlay.md`；`ImageViewport::drawPixelOverlay/mousePressEvent/wheelEvent`、`PixelInfoDialog`；黑白 RAW 离屏渲染与交互期间零像素查询测试 | V0.7-01～05 | Verified |
+| VIEW-005 | V0.7.1 连续像素标注：无闪烁跟随、全可见像素、自动 RAW/RGB 值、RGGB 四色遮罩和右下角 Pattern | `docs/plans/v0.7.1-continuous-pixel-overlay.md`；`ImageViewport::drawPixelOverlay`、`PixelInfoDialog`；连续拖拽/滚轮、500 像素、四色遮罩、RGB 自动格式 UI 测试 | V0.7.1-01～06 | Verified |
 | TOOL-004 | 预留复杂 ISP 工具 | 架构 12 | P2-01，持续 | Planned |
 
 ## 追踪规则

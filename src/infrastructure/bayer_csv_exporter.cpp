@@ -47,7 +47,7 @@ application::BayerExportResult BayerCsvExporter::exportCsv(
                 0};
     }
     constexpr char header[] =
-        "channel_x,channel_y,source_x,source_y,value\n";
+        "output_x,output_y,source_x,source_y,value\n";
     if (file.write(header) != static_cast<qint64>(sizeof(header) - 1)) {
         file.cancelWriting();
         return {false,
@@ -75,11 +75,16 @@ application::BayerExportResult BayerCsvExporter::exportCsv(
         for (std::uint64_t x = 0; x < geometry.width; ++x) {
             const auto source = geometry.sourceCoordinate(x, y);
             const auto sample = pixels->sample(x, y);
-            if (!source || !sample.valid) {
+            // Rectangular output units can contain padding slots and partial
+            // edge units can reference cells outside the source. Neither is
+            // an exported sample.
+            if (!source) {
+                continue;
+            }
+            if (!sample.valid) {
                 file.cancelWriting();
-                return {false,
-                        "bayer_export.sample_failed",
-                        "A Bayer sample could not be read during CSV export.",
+                return {false, "bayer_export.sample_failed",
+                        "A selected Bayer sample could not be read during CSV export.",
                         exported};
             }
             appendUnsigned(row, x);

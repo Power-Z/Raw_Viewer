@@ -9,7 +9,6 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QProgressBar>
-#include <QStringList>
 #include <QResizeEvent>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -17,7 +16,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
 
 namespace rawviewer::presentation {
 
@@ -27,6 +25,7 @@ ImageViewport::ImageViewport(QWidget* parent)
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
     setMinimumSize(320, 240);
+    setAttribute(Qt::WA_OpaquePaintEvent, true);
 
     loadingOverlay_ = new QWidget(this);
     loadingOverlay_->setObjectName(QStringLiteral("rawLoadingOverlay"));
@@ -198,8 +197,11 @@ void ImageViewport::drawStatisticsSelection(QPainter& painter) {
 }
 
 void ImageViewport::drawPixelOverlay(QPainter& painter) {
-    if (!overlayOptions_.enabled || !image_ || !image_->pixels ||
-        zoom_ < overlayOptions_.minimumCellPixels) {
+    const bool hasOverlay = overlayOptions_.enabled ||
+        overlayOptions_.showMesh || overlayOptions_.showBayerLabel;
+    if (!hasOverlay || !image_ || preview_.isNull() ||
+        zoom_ < overlayOptions_.minimumCellPixels ||
+        (overlayOptions_.enabled && !image_->pixels)) {
         return;
     }
 
@@ -227,112 +229,93 @@ void ImageViewport::drawPixelOverlay(QPainter& painter) {
 
     painter.save();
     painter.setClipRect(rect());
-    if (overlayOptions_.showMesh) {
-        QPen gridPen(palette().color(QPalette::Highlight));
-        gridPen.setCosmetic(true);
-        gridPen.setColor(QColor(gridPen.color().red(),
-                                gridPen.color().green(),
-                                gridPen.color().blue(),
-                                150));
-        painter.setPen(gridPen);
-        for (qint64 x = left; x <= right; ++x) {
-            const double screenX = offset_.x() + x * zoom_;
-            painter.drawLine(QPointF(screenX, offset_.y() + top * zoom_),
-                             QPointF(screenX, offset_.y() + bottom * zoom_));
-        }
-        for (qint64 y = top; y <= bottom; ++y) {
-            const double screenY = offset_.y() + y * zoom_;
-            painter.drawLine(QPointF(offset_.x() + left * zoom_, screenY),
-                             QPointF(offset_.x() + right * zoom_, screenY));
-        }
-    }
 
-    auto channelColor = [](domain::BayerChannel channel) {
+    const auto textColorAt = [this, imageWidth, imageHeight](qint64 x, qint64 y) {
+        const int previewX = std::clamp(
+            static_cast<int>((x * preview_.width()) / imageWidth),
+            0,
+            preview_.width() - 1);
+        const int previewY = std::clamp(
+            static_cast<int>((y * preview_.height()) / imageHeight),
+            0,
+            preview_.height() - 1);
+        const QColor background = preview_.pixelColor(previewX, previewY);
+        const int luminance = qGray(background.rgb());
+        return luminance >= 140 ? QColor(Qt::black) : QColor(Qt::white);
+    };
+    const auto meshColor = [](domain::BayerChannel channel) {
         switch (channel) {
-        case domain::BayerChannel::R: return QColor(255, 105, 105);
-        case domain::BayerChannel::Gr:
-        case domain::BayerChannel::Gb: return QColor(120, 235, 135);
-        case domain::BayerChannel::B: return QColor(120, 170, 255);
-        case domain::BayerChannel::None: return QColor(245, 245, 245);
+        case domain::BayerChannel::R: return QColor(255, 55, 55, 64);
+        case domain::BayerChannel::Gr: return QColor(80, 235, 105, 64);
+        case domain::BayerChannel::Gb: return QColor(25, 165, 70, 64);
+        case domain::BayerChannel::B: return QColor(55, 95, 255, 64);
+        case domain::BayerChannel::None: return QColor(Qt::transparent);
         }
-        return QColor(245, 245, 245);
+        return QColor(Qt::transparent);
     };
 
-    std::uint64_t cellIndex = 0;
-    const auto totalCells = static_cast<std::uint64_t>(right - left) *
-                            static_cast<std::uint64_t>(bottom - top);
-    const auto labelLimit = static_cast<std::uint64_t>(
-        overlayOptions_.maximumLabels);
-    const QFontMetrics metrics(painter.font());
+    QFont valueFont = painter.font();
+    valueFont.setPixelSize(
+        std::max(1, static_cast<int>(std::lround(zoom_ / 6.0))));
+    QFont patternFont = painter.font();
+    patternFont.setPixelSize(
+        std::max(1, static_cast<int>(std::lround(zoom_ / 7.0))));
+    const double patternMargin = std::max(1.0, zoom_ / 28.0);
     for (qint64 y = top; y < bottom; ++y) {
-        for (qint64 x = left; x < right; ++x, ++cellIndex) {
-            if (totalCells > labelLimit) {
-                const auto slot = cellIndex * labelLimit / totalCells;
-                const auto previousSlot = cellIndex == 0
-                    ? std::numeric_limits<std::uint64_t>::max()
-                    : (cellIndex - 1) * labelLimit / totalCells;
-                if (slot == previousSlot) {
-                    continue;
-                }
-            }
-            const auto info = application::queryPixelInfo(
-                *image_,
-                displayMapping_,
+        for (qint64 x = left; x < right; ++x) {
+            const auto channel = domain::bayerChannelAt(
+                image_->metadata.bayerPattern,
                 static_cast<std::uint64_t>(x),
                 static_cast<std::uint64_t>(y));
-            if (!info.valid) {
-                continue;
-            }
-            QStringList lines;
-            const bool isFlatRaw =
-                image_->metadata.kind == application::ImageKind::FlatRaw;
-            if (isFlatRaw) {
-                if (overlayOptions_.showOriginal) {
-                    lines << tr("Raw %1").arg(info.originalValue, 0, 'g', 8);
-                }
-            } else {
-                if (overlayOptions_.showBayerLabel &&
-                    info.channel != domain::BayerChannel::None) {
-                    lines << QString::fromLatin1(domain::toString(info.channel));
-                }
-                if (overlayOptions_.showOriginal) {
-                    lines << tr("Raw %1").arg(info.originalValue, 0, 'g', 8);
-                }
-                if (overlayOptions_.showProcessed) {
-                    lines << tr("Display %1")
-                                 .arg(info.processedValue, 0, 'f', 4);
-                }
-                if (overlayOptions_.showRgb && info.rgbValid) {
-                    lines << tr("RGB %1,%2,%3")
-                                 .arg(info.red)
-                                 .arg(info.green)
-                                 .arg(info.blue);
-                }
-            }
-            if (lines.isEmpty()) {
-                continue;
+            const QRectF cell(offset_.x() + x * zoom_,
+                              offset_.y() + y * zoom_,
+                              zoom_,
+                              zoom_);
+            if (overlayOptions_.showMesh &&
+                channel != domain::BayerChannel::None) {
+                painter.fillRect(cell, meshColor(channel));
             }
 
-            QRectF cell(offset_.x() + x * zoom_,
-                        offset_.y() + y * zoom_,
-                        zoom_,
-                        zoom_);
-            const QString text = lines.join('\n');
-            QRect textBounds = metrics.boundingRect(
-                QRect(0, 0,
-                      std::max(1, static_cast<int>(cell.width() - 6.0)),
-                      std::max(1, static_cast<int>(cell.height() - 4.0))),
-                Qt::AlignCenter | Qt::TextWordWrap,
-                text);
-            QRectF background(cell.center().x() - textBounds.width() / 2.0 - 3.0,
-                              cell.center().y() - textBounds.height() / 2.0 - 2.0,
-                              textBounds.width() + 6.0,
-                              textBounds.height() + 4.0);
-            painter.fillRect(background, QColor(0, 0, 0, 155));
-            painter.setPen(channelColor(info.channel));
-            painter.drawText(cell.adjusted(3.0, 2.0, -3.0, -2.0),
-                             Qt::AlignCenter | Qt::TextWordWrap,
-                             text);
+            if (overlayOptions_.enabled) {
+                QString text;
+                if (image_->metadata.kind == application::ImageKind::Standard) {
+                    const auto info = application::queryPixelInfo(
+                        *image_, displayMapping_,
+                        static_cast<std::uint64_t>(x),
+                        static_cast<std::uint64_t>(y));
+                    if (info.valid && info.rgbValid) {
+                        text = QStringLiteral("%1,%2,%3")
+                            .arg(info.red).arg(info.green).arg(info.blue);
+                    } else if (info.valid) {
+                        text = QString::number(info.originalValue, 'g', 8);
+                    }
+                } else {
+                    const auto sample = image_->pixels->sample(
+                        static_cast<std::uint64_t>(x),
+                        static_cast<std::uint64_t>(y));
+                    if (sample.valid) {
+                        text = QString::number(sample.value, 'g', 8);
+                    }
+                }
+                if (!text.isEmpty()) {
+                    painter.setFont(valueFont);
+                    painter.setPen(textColorAt(x, y));
+                    painter.drawText(cell,
+                                     Qt::AlignCenter | Qt::TextDontClip,
+                                     text);
+                }
+            }
+
+            if (overlayOptions_.showBayerLabel &&
+                channel != domain::BayerChannel::None) {
+                painter.setFont(patternFont);
+                painter.setPen(textColorAt(x, y));
+                painter.drawText(
+                    cell.adjusted(patternMargin, patternMargin,
+                                  -patternMargin, -patternMargin),
+                    Qt::AlignRight | Qt::AlignBottom | Qt::TextDontClip,
+                    QString::fromLatin1(domain::toString(channel)));
+            }
         }
     }
     painter.restore();
