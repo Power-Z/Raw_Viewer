@@ -1,11 +1,14 @@
 #include "application/bayer_extract.h"
+#include "application/demosaic.h"
 #include "application/document_session.h"
+#include "application/filter.h"
 #include "application/pixel_info.h"
 #include "application/pixel_statistics.h"
 #include "application/preview_renderer.h"
 
 #include <QTest>
 
+#include <array>
 #include <cmath>
 #include <memory>
 #include <numeric>
@@ -42,12 +45,40 @@ public:
         if (x >= width_ || y >= height_) {
             return {};
         }
+        ++sampleCalls;
         return {true, static_cast<double>(y * 10 + x)};
+    }
+
+    mutable std::uint64_t sampleCalls = 0;
+
+private:
+    std::uint64_t width_ = 0;
+    std::uint64_t height_ = 0;
+};
+
+class VectorPixelSource final : public rawviewer::application::IPixelSource {
+public:
+    VectorPixelSource(std::uint64_t width,
+                      std::uint64_t height,
+                      std::vector<double> values)
+        : width_(width), height_(height), values_(std::move(values)) {}
+
+    std::uint64_t width() const noexcept override { return width_; }
+    std::uint64_t height() const noexcept override { return height_; }
+
+    rawviewer::application::PixelSample sample(
+        std::uint64_t x,
+        std::uint64_t y) const noexcept override {
+        if (x >= width_ || y >= height_) {
+            return {};
+        }
+        return {true, values_[static_cast<std::size_t>(y * width_ + x)]};
     }
 
 private:
     std::uint64_t width_ = 0;
     std::uint64_t height_ = 0;
+    std::vector<double> values_;
 };
 
 std::shared_ptr<rawviewer::application::DecodedImage> makeImage() {
@@ -93,6 +124,27 @@ std::shared_ptr<rawviewer::application::DecodedImage> makeBayerImage(
     return image;
 }
 
+std::shared_ptr<rawviewer::application::DecodedImage> makeConstantColorBayer(
+    std::uint64_t width,
+    std::uint64_t height,
+    rawviewer::domain::BayerPattern pattern) {
+    auto image = makeBayerImage(width, height, pattern);
+    std::vector<double> values(static_cast<std::size_t>(width * height));
+    for (std::uint64_t y = 0; y < height; ++y) {
+        for (std::uint64_t x = 0; x < width; ++x) {
+            const auto channel = rawviewer::domain::bayerChannelAt(
+                pattern, x, y);
+            values[static_cast<std::size_t>(y * width + x)] =
+                channel == rawviewer::domain::BayerChannel::R ? 100.0 :
+                channel == rawviewer::domain::BayerChannel::B ? 10.0 : 50.0;
+        }
+    }
+    image->metadata.whiteLevel = 100.0;
+    image->pixels = std::make_shared<VectorPixelSource>(
+        width, height, std::move(values));
+    return image;
+}
+
 void commitBlackPoint(rawviewer::application::DocumentSession& session,
                       double blackPoint) {
     auto mapping = session.displayMapping();
@@ -115,6 +167,7 @@ private slots:
     void preservesDirectGray16WithoutRgbRendering();
     void queriesOriginalProcessedRgbAndBayerValues();
     void rejectsOutOfBoundsPixelInfo();
+    void keepsPixelInfoOnLatestIndependentExtraction();
     void extractsChannelsFromOddSizedImage();
     void packsArbitraryMaskByRowsAndColumns();
     void extractsStandardQuadHexAndSpecialPatternPositions();
@@ -124,6 +177,15 @@ private slots:
     void cancelsBayerExtraction();
     void calculatesStatusAndProfilesFromOriginalBayerSamples();
     void filtersStatisticsByBayerChannelAndCancels();
+    void calculatesStatisticsFromExtractedDisplayPipeline();
+    void calculatesFourChannelsInSinglePass();
+    void filtersCurrentRawWithGoldenValues();
+    void chainsFiltersWithoutMutatingTheSource();
+    void reusesBoundedFilterTiles();
+    void rejectsInvalidAndCancelledFilters();
+    void demosaicsAllBayerPatternsWithThreeAlgorithms();
+    void keepsDemosaicPreviewAndExactTilesBounded();
+    void rejectsUnsupportedAndCancelledDemosaic();
 };
 
 void DocumentSessionTest::keepsOnlyFiveUndoOperations() {
@@ -226,6 +288,39 @@ void DocumentSessionTest::rejectsOutOfBoundsPixelInfo() {
     const auto info = rawviewer::application::queryPixelInfo(
         *image, {}, 3, 0);
     QVERIFY(!info.valid);
+}
+
+void DocumentSessionTest::keepsPixelInfoOnLatestIndependentExtraction() {
+    const auto original = makeBayerImage(4, 4);
+    rawviewer::application::BayerExtractService service;
+    rawviewer::application::BayerExtractRequest request;
+    request.source = original;
+    request.mask = {"R", 2, 2, {1, 0, 0, 0}};
+
+    const auto first = service.execute(request);
+    QVERIFY2(first.succeeded(), first.message.c_str());
+    QCOMPARE(first.extraction->image->pixels->sample(0, 0).value, 0.0);
+    QCOMPARE(first.extraction->image->pixels->sample(1, 1).value, 22.0);
+
+    // MainWindow deliberately submits every extraction against original().
+    // Reusing that contract here catches accidental extract-on-extract
+    // chaining while also verifying the exact source used by pixel labels.
+    request.source = original;
+    request.mask = {"Gr", 2, 2, {0, 1, 0, 0}};
+    const auto second = service.execute(request);
+    QVERIFY2(second.succeeded(), second.message.c_str());
+    QCOMPARE(second.extraction->image->pixels->sample(0, 0).value, 1.0);
+    QCOMPARE(second.extraction->image->pixels->sample(1, 0).value, 3.0);
+    QCOMPARE(second.extraction->image->pixels->sample(0, 1).value, 21.0);
+    QCOMPARE(second.extraction->image->pixels->sample(1, 1).value, 23.0);
+
+    const auto info = rawviewer::application::queryPixelInfo(
+        *second.extraction->image, {}, 1, 1);
+    QVERIFY(info.valid);
+    QCOMPARE(info.originalValue, 23.0);
+    QCOMPARE(info.channel, rawviewer::domain::BayerChannel::Gr);
+    QCOMPARE(second.extraction->image->pixels->bayerChannel(0, 0),
+             rawviewer::domain::BayerChannel::Gr);
 }
 
 void DocumentSessionTest::extractsChannelsFromOddSizedImage() {
@@ -473,6 +568,7 @@ void DocumentSessionTest::calculatesStatusAndProfilesFromOriginalBayerSamples() 
     QCOMPARE(result.plot.y, std::vector<double>({0.0, 11.0, 12.0, 23.0}));
     QCOMPARE(result.summary.count, std::uint64_t{4});
     QCOMPARE(result.summary.mean, 11.5);
+
 }
 
 void DocumentSessionTest::filtersStatisticsByBayerChannelAndCancels() {
@@ -500,6 +596,380 @@ void DocumentSessionTest::filtersStatisticsByBayerChannelAndCancels() {
 
     request.cancellation = std::make_shared<std::atomic_bool>(true);
     result = service.execute(request);
+    QVERIFY(!result.succeeded());
+    QCOMPARE(QString::fromStdString(result.errorCode),
+             QStringLiteral("task.cancelled"));
+}
+
+void DocumentSessionTest::calculatesStatisticsFromExtractedDisplayPipeline() {
+    rawviewer::application::BayerExtractRequest extractRequest;
+    extractRequest.source = makeBayerImage(4, 4);
+    extractRequest.mask = {"top-right", 2, 2, {0, 1, 0, 0}};
+    const auto extracted =
+        rawviewer::application::BayerExtractService().execute(extractRequest);
+    QVERIFY2(extracted.succeeded(), extracted.message.c_str());
+    QCOMPARE(extracted.extraction->image->metadata.bayerPattern,
+             rawviewer::domain::BayerPattern::None);
+
+    rawviewer::application::PixelStatisticsRequest request;
+    request.source = extracted.extraction->image;
+    request.selection = {0, 0, 1, 1};
+    request.mode = rawviewer::application::PixelStatisticsMode::Status;
+    request.histogramBins = 64;
+    const auto result =
+        rawviewer::application::PixelStatisticsService().execute(request);
+    QVERIFY2(result.succeeded(), result.message.c_str());
+    QCOMPARE(result.summary.count, std::uint64_t{4});
+    QCOMPARE(result.summary.minimum, 1.0);
+    QCOMPARE(result.summary.maximum, 23.0);
+    QCOMPARE(result.summary.mean, 12.0);
+
+    request.channel = rawviewer::domain::BayerChannel::R;
+    const auto unavailable =
+        rawviewer::application::PixelStatisticsService().execute(request);
+    QVERIFY(!unavailable.succeeded());
+    QCOMPARE(QString::fromStdString(unavailable.errorCode),
+             QStringLiteral("statistics.channel_unavailable"));
+}
+
+void DocumentSessionTest::calculatesFourChannelsInSinglePass() {
+    auto image = makeBayerImage(4, 4);
+    const auto source = std::dynamic_pointer_cast<const GridPixelSource>(
+        image->pixels);
+    QVERIFY(source);
+    rawviewer::application::PixelStatisticsRequest request;
+    request.source = image;
+    request.selection = {0, 0, 3, 3};
+    request.mode = rawviewer::application::PixelStatisticsMode::Status;
+    request.histogramBins = 64;
+
+    const auto results =
+        rawviewer::application::PixelStatisticsService().executeChannels(request);
+    QCOMPARE(results.size(), std::size_t{4});
+    QCOMPARE(source->sampleCalls, std::uint64_t{16});
+    const std::array expectedMeans{11.0, 12.0, 21.0, 22.0};
+    for (std::size_t index = 0; index < results.size(); ++index) {
+        QVERIFY2(results[index].succeeded(), results[index].message.c_str());
+        QCOMPARE(results[index].summary.count, std::uint64_t{4});
+        QCOMPARE(results[index].summary.mean, expectedMeans[index]);
+    }
+
+    for (const auto mode : {
+             rawviewer::application::PixelStatisticsMode::HorizontalBox,
+             rawviewer::application::PixelStatisticsMode::VerticalBox}) {
+        source->sampleCalls = 0;
+        request.mode = mode;
+        const auto profiles =
+            rawviewer::application::PixelStatisticsService().executeChannels(
+                request);
+        QCOMPARE(source->sampleCalls, std::uint64_t{16});
+        QCOMPARE(profiles.size(), std::size_t{4});
+        for (std::size_t index = 0; index < profiles.size(); ++index) {
+            QVERIFY2(profiles[index].succeeded(),
+                     profiles[index].message.c_str());
+            QCOMPARE(profiles[index].summary.count, std::uint64_t{2});
+            QCOMPARE(profiles[index].summary.mean, expectedMeans[index]);
+        }
+    }
+
+    source->sampleCalls = 0;
+    request.mode = rawviewer::application::PixelStatisticsMode::Line;
+    const auto line =
+        rawviewer::application::PixelStatisticsService().executeChannels(request);
+    QCOMPARE(source->sampleCalls, std::uint64_t{4});
+    QCOMPARE(line.size(), std::size_t{4});
+    QVERIFY(line[0].succeeded());
+    QCOMPARE(line[0].summary.count, std::uint64_t{2});
+    QCOMPARE(line[0].summary.mean, 11.0);
+    QVERIFY(!line[1].succeeded());
+    QVERIFY(!line[2].succeeded());
+    QVERIFY(line[3].succeeded());
+    QCOMPARE(line[3].summary.count, std::uint64_t{2});
+    QCOMPARE(line[3].summary.mean, 22.0);
+}
+
+void DocumentSessionTest::filtersCurrentRawWithGoldenValues() {
+    rawviewer::application::FilterService service;
+    rawviewer::application::FilterRequest request;
+    request.source = makeBayerImage(5, 5);
+    request.parameters.type = rawviewer::application::FilterType::Mean;
+    request.parameters.kernelSize = 3;
+    auto result = service.execute(request);
+    QVERIFY2(result.succeeded(), result.message.c_str());
+    const auto center = result.image->pixels->sample(2, 2);
+    QVERIFY(center.valid);
+    QCOMPARE(center.value, 22.0);
+    const auto clampedCorner = result.image->pixels->sample(0, 0);
+    QVERIFY(clampedCorner.valid);
+    QVERIFY(std::abs(clampedCorner.value - 33.0 / 9.0) < 1.0e-12);
+
+    request.parameters.type = rawviewer::application::FilterType::Gaussian;
+    request.parameters.sigma = 1.0;
+    result = service.execute(request);
+    QVERIFY2(result.succeeded(), result.message.c_str());
+    QVERIFY(std::abs(result.image->pixels->sample(2, 2).value - 22.0) <
+            1.0e-12);
+
+    auto impulse = makeBayerImage(3, 3);
+    impulse->pixels = std::make_shared<VectorPixelSource>(
+        3, 3, std::vector<double>{0, 0, 0, 0, 100, 0, 0, 0, 0});
+    request.source = impulse;
+    request.parameters.type = rawviewer::application::FilterType::Median;
+    result = service.execute(request);
+    QVERIFY2(result.succeeded(), result.message.c_str());
+    QCOMPARE(result.image->pixels->sample(1, 1).value, 0.0);
+    QCOMPARE(impulse->pixels->sample(1, 1).value, 100.0);
+}
+
+void DocumentSessionTest::chainsFiltersWithoutMutatingTheSource() {
+    const auto original = makeBayerImage(5, 5);
+    rawviewer::application::FilterService service;
+    rawviewer::application::FilterRequest firstRequest;
+    firstRequest.source = original;
+    firstRequest.parameters.type = rawviewer::application::FilterType::Mean;
+    const auto first = service.execute(firstRequest);
+    QVERIFY2(first.succeeded(), first.message.c_str());
+
+    rawviewer::application::FilterRequest secondRequest;
+    secondRequest.source = first.image;
+    secondRequest.parameters.type = rawviewer::application::FilterType::Median;
+    const auto second = service.execute(secondRequest);
+    QVERIFY2(second.succeeded(), second.message.c_str());
+    QVERIFY(second.image->metadata.format.find("Mean filter / Median filter") !=
+            std::string::npos);
+    QCOMPARE(original->metadata.format, std::string("Synthetic RAW"));
+    QCOMPARE(original->pixels->sample(0, 0).value, 0.0);
+}
+
+void DocumentSessionTest::reusesBoundedFilterTiles() {
+    auto image = makeBayerImage(128, 64);
+    const auto source = std::dynamic_pointer_cast<const GridPixelSource>(
+        image->pixels);
+    QVERIFY(source);
+    rawviewer::application::FilterRequest request;
+    request.source = image;
+    request.parameters.type = rawviewer::application::FilterType::Mean;
+    request.parameters.kernelSize = 3;
+    const auto result = rawviewer::application::FilterService().execute(request);
+    QVERIFY2(result.succeeded(), result.message.c_str());
+
+    source->sampleCalls = 0;
+    for (std::uint64_t y = 0; y < 64; ++y) {
+        for (std::uint64_t x = 0; x < 128; ++x) {
+            QVERIFY(result.image->pixels->sample(x, y).valid);
+        }
+    }
+    const auto firstPassReads = source->sampleCalls;
+    QVERIFY2(firstPassReads < 12'000,
+             "tile filtering must read the halo once, not per output pixel");
+    QCOMPARE(firstPassReads, std::uint64_t{8'712});
+    QVERIFY(result.image->pixels->sample(0, 0).valid);
+    QVERIFY(result.image->pixels->sample(127, 63).valid);
+    QCOMPARE(source->sampleCalls, firstPassReads);
+    QVERIFY(result.image->signalPreview);
+    QVERIFY(result.image->signalPreview->width <= 1024);
+    QVERIFY(result.image->signalPreview->height <= 1024);
+
+    auto wideImage = makeBayerImage(4096, 2);
+    const auto wideSource = std::dynamic_pointer_cast<const GridPixelSource>(
+        wideImage->pixels);
+    request.source = wideImage;
+    const auto wideResult =
+        rawviewer::application::FilterService().execute(request);
+    QVERIFY2(wideResult.succeeded(), wideResult.message.c_str());
+    wideSource->sampleCalls = 0;
+    for (std::uint64_t y = 0; y < 2; ++y) {
+        for (std::uint64_t x = 0; x < 4096; ++x) {
+            QVERIFY(wideResult.image->pixels->sample(x, y).valid);
+        }
+    }
+    QCOMPARE(wideSource->sampleCalls, std::uint64_t{16'896});
+
+    auto previewImage = makeBayerImage(1100, 10);
+    auto signal = std::make_shared<rawviewer::application::SignalPreview>();
+    signal->width = 1100;
+    signal->height = 10;
+    signal->values.resize(11'000, 42.0F);
+    previewImage->signalPreview = signal;
+    request.source = previewImage;
+    const auto bounded =
+        rawviewer::application::FilterService().execute(request);
+    QVERIFY2(bounded.succeeded(), bounded.message.c_str());
+    QCOMPARE(bounded.image->signalPreview->width, 1024);
+    QVERIFY(bounded.image->signalPreview->height <= 1024);
+}
+
+void DocumentSessionTest::rejectsInvalidAndCancelledFilters() {
+    rawviewer::application::FilterRequest request;
+    request.source = makeBayerImage(3, 3);
+    request.parameters.kernelSize = 9;
+    auto result = rawviewer::application::FilterService().execute(request);
+    QVERIFY(!result.succeeded());
+    QCOMPARE(QString::fromStdString(result.errorCode),
+             QStringLiteral("filter.invalid_parameters"));
+
+    request.parameters.kernelSize = 3;
+    request.cancellation = std::make_shared<std::atomic_bool>(true);
+    result = rawviewer::application::FilterService().execute(request);
+    QVERIFY(!result.succeeded());
+    QCOMPARE(QString::fromStdString(result.errorCode),
+             QStringLiteral("task.cancelled"));
+}
+
+void DocumentSessionTest::demosaicsAllBayerPatternsWithThreeAlgorithms() {
+    rawviewer::application::DemosaicService service;
+    const std::array patterns{
+        rawviewer::domain::BayerPattern::RGGB,
+        rawviewer::domain::BayerPattern::BGGR,
+        rawviewer::domain::BayerPattern::GRBG,
+        rawviewer::domain::BayerPattern::GBRG};
+    const std::array algorithms{
+        rawviewer::application::DemosaicAlgorithm::Bilinear,
+        rawviewer::application::DemosaicAlgorithm::MalvarHeCutler,
+        rawviewer::application::DemosaicAlgorithm::HamiltonAdams};
+    for (const auto pattern : patterns) {
+        const auto source = makeConstantColorBayer(8, 8, pattern);
+        for (const auto algorithm : algorithms) {
+            rawviewer::application::DemosaicRequest request;
+            request.source = source;
+            request.algorithm = algorithm;
+            request.displayMapping = {0.0, 100.0, 1.0};
+            const auto result = service.execute(request);
+            QVERIFY2(result.succeeded(), result.message.c_str());
+            QCOMPARE(result.image->metadata.kind,
+                     rawviewer::application::ImageKind::Standard);
+            QCOMPARE(result.image->metadata.bayerPattern,
+                     rawviewer::domain::BayerPattern::None);
+            QVERIFY(result.image->displayReadyRgb);
+            for (const auto point : {
+                     std::pair<std::uint64_t, std::uint64_t>{0, 0},
+                     {3, 3}, {7, 7}}) {
+                const auto sample = result.image->pixels->sample(
+                    point.first, point.second);
+                QVERIFY(sample.valid);
+                QVERIFY(sample.rgbValid);
+                QCOMPARE(sample.red, std::uint8_t{255});
+                QCOMPARE(sample.green, std::uint8_t{128});
+                QCOMPARE(sample.blue, std::uint8_t{26});
+            }
+        }
+        QCOMPARE(source->metadata.kind,
+                 rawviewer::application::ImageKind::FlatRaw);
+        QCOMPARE(source->metadata.bayerPattern, pattern);
+    }
+
+    auto impulse = makeBayerImage(5, 5);
+    impulse->metadata.whiteLevel = 100.0;
+    std::vector<double> impulseValues(25, 0.0);
+    impulseValues[12] = 80.0; // RGGB red site at (2, 2).
+    impulse->pixels = std::make_shared<VectorPixelSource>(
+        5, 5, std::move(impulseValues));
+    rawviewer::application::DemosaicRequest impulseRequest;
+    impulseRequest.source = impulse;
+    impulseRequest.displayMapping = {0.0, 100.0, 1.0};
+
+    impulseRequest.algorithm =
+        rawviewer::application::DemosaicAlgorithm::Bilinear;
+    auto result = service.execute(impulseRequest);
+    auto sample = result.image->pixels->sample(2, 2);
+    QCOMPARE(sample.red, std::uint8_t{204});
+    QCOMPARE(sample.green, std::uint8_t{0});
+    QCOMPARE(sample.blue, std::uint8_t{0});
+
+    impulseRequest.algorithm =
+        rawviewer::application::DemosaicAlgorithm::MalvarHeCutler;
+    result = service.execute(impulseRequest);
+    sample = result.image->pixels->sample(2, 2);
+    QCOMPARE(sample.red, std::uint8_t{204});
+    QCOMPARE(sample.green, std::uint8_t{102});
+    QCOMPARE(sample.blue, std::uint8_t{153});
+
+    impulseRequest.algorithm =
+        rawviewer::application::DemosaicAlgorithm::HamiltonAdams;
+    result = service.execute(impulseRequest);
+    sample = result.image->pixels->sample(2, 2);
+    QCOMPARE(sample.red, std::uint8_t{204});
+    QCOMPARE(sample.green, std::uint8_t{102});
+    QCOMPARE(sample.blue, std::uint8_t{102});
+    const auto rendered = rawviewer::application::PreviewRenderer::render(
+        result.image, {0.0, 65535.0, 2.2});
+    QVERIFY(rendered);
+    QCOMPARE(rendered->preview.rgba, result.image->preview.rgba);
+    const auto info = rawviewer::application::queryPixelInfo(
+        *rendered, {0.0, 65535.0, 2.2}, 2, 2);
+    QVERIFY(info.rgbValid);
+    QCOMPARE(info.red, sample.red);
+    QCOMPARE(info.green, sample.green);
+    QCOMPARE(info.blue, sample.blue);
+}
+
+void DocumentSessionTest::keepsDemosaicPreviewAndExactTilesBounded() {
+    auto source = makeBayerImage(128, 64);
+    const auto pixels = std::dynamic_pointer_cast<const GridPixelSource>(
+        source->pixels);
+    QVERIFY(pixels);
+    rawviewer::application::DemosaicRequest request;
+    request.source = source;
+    request.algorithm =
+        rawviewer::application::DemosaicAlgorithm::MalvarHeCutler;
+    request.displayMapping = {0.0, 65535.0, 1.0};
+    const auto result = rawviewer::application::DemosaicService().execute(request);
+    QVERIFY2(result.succeeded(), result.message.c_str());
+    pixels->sampleCalls = 0;
+    for (std::uint64_t y = 0; y < 64; ++y) {
+        for (std::uint64_t x = 0; x < 128; ++x) {
+            QVERIFY(result.image->pixels->sample(x, y).valid);
+        }
+    }
+    QCOMPARE(pixels->sampleCalls, std::uint64_t{9'800});
+    const auto firstPassReads = pixels->sampleCalls;
+    QVERIFY(result.image->pixels->sample(0, 0).valid);
+    QVERIFY(result.image->pixels->sample(127, 63).valid);
+    QCOMPARE(pixels->sampleCalls, firstPassReads);
+
+    auto wide = makeBayerImage(1100, 10);
+    request.source = wide;
+    const auto bounded =
+        rawviewer::application::DemosaicService().execute(request);
+    QVERIFY2(bounded.succeeded(), bounded.message.c_str());
+    QCOMPARE(bounded.image->preview.width, 1024);
+    QVERIFY(bounded.image->preview.height <= 1024);
+    QCOMPARE(bounded.image->preview.rgba.size(),
+             static_cast<std::size_t>(bounded.image->preview.width *
+                 bounded.image->preview.height * 4));
+
+    auto filteredSource = makeBayerImage(1100, 10);
+    const auto filteredPixels =
+        std::dynamic_pointer_cast<const GridPixelSource>(
+            filteredSource->pixels);
+    rawviewer::application::FilterRequest filterRequest;
+    filterRequest.source = filteredSource;
+    filterRequest.parameters.type =
+        rawviewer::application::FilterType::Mean;
+    const auto filtered =
+        rawviewer::application::FilterService().execute(filterRequest);
+    QVERIFY2(filtered.succeeded(), filtered.message.c_str());
+    QVERIFY(filtered.image->signalPreview->preservesBayerPhase);
+    filteredPixels->sampleCalls = 0;
+    request.source = filtered.image;
+    const auto chained =
+        rawviewer::application::DemosaicService().execute(request);
+    QVERIFY2(chained.succeeded(), chained.message.c_str());
+    QCOMPARE(filteredPixels->sampleCalls, std::uint64_t{0});
+}
+
+void DocumentSessionTest::rejectsUnsupportedAndCancelledDemosaic() {
+    rawviewer::application::DemosaicRequest request;
+    request.source = makeBayerImage(
+        4, 4, rawviewer::domain::BayerPattern::None);
+    auto result = rawviewer::application::DemosaicService().execute(request);
+    QVERIFY(!result.succeeded());
+    QCOMPARE(QString::fromStdString(result.errorCode),
+             QStringLiteral("demosaic.unsupported_source"));
+
+    request.source = makeBayerImage(4, 4);
+    request.cancellation = std::make_shared<std::atomic_bool>(true);
+    result = rawviewer::application::DemosaicService().execute(request);
     QVERIFY(!result.succeeded());
     QCOMPARE(QString::fromStdString(result.errorCode),
              QStringLiteral("task.cancelled"));

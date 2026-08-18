@@ -30,7 +30,7 @@ private:
     bool showGrid_ = true;
     bool showPoints_ = false;
     bool fillHistogram_ = true;
-    int lineWidth_ = 2;
+    int lineWidth_ = 1;
 };
 
 } // namespace rawviewer::presentation

@@ -25,6 +25,14 @@ public:
     virtual std::uint64_t height() const noexcept = 0;
     virtual PixelSample sample(std::uint64_t x,
                                std::uint64_t y) const noexcept = 0;
+    // Most sources have a regular Bayer pattern described by ImageMetadata.
+    // Derived/packed sources can override this to preserve per-pixel channel
+    // provenance when their output no longer has a regular Bayer layout.
+    virtual domain::BayerChannel bayerChannel(
+        std::uint64_t,
+        std::uint64_t) const noexcept {
+        return domain::BayerChannel::None;
+    }
 };
 
 struct DisplayImage {
@@ -45,6 +53,8 @@ struct SignalPreview {
     int width = 0;
     int height = 0;
     std::vector<float> values;
+    bool preservesBayerPhase = false;
+    domain::BayerPattern bayerPattern = domain::BayerPattern::None;
 };
 
 enum class ImageKind {
@@ -71,6 +81,9 @@ struct DecodedImage {
     std::shared_ptr<const SignalPreview> signalPreview;
     ImageMetadata metadata;
     std::shared_ptr<const IPixelSource> pixels;
+    // RGB products such as demosaic output are already mapped to display
+    // bytes. They must not be mapped a second time through the RAW range.
+    bool displayReadyRgb = false;
 };
 
 } // namespace rawviewer::application

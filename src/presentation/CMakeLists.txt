@@ -1,5 +1,7 @@
 add_library(rawviewer_presentation STATIC
     bayer_extract_dialog.cpp
+    demosaic_dialog.cpp
+    filter_dialog.cpp
     histogram_widget.cpp
     image_viewport.cpp
     main_window.cpp

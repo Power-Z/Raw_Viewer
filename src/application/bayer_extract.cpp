@@ -66,6 +66,20 @@ public:
         return source ? source_->sample(source->x, source->y) : PixelSample{};
     }
 
+    domain::BayerChannel bayerChannel(
+        std::uint64_t x,
+        std::uint64_t y) const noexcept override {
+        const auto source = geometry_.sourceCoordinate(x, y);
+        if (!source) {
+            return domain::BayerChannel::None;
+        }
+        const auto inherited = source_->bayerChannel(source->x, source->y);
+        return inherited != domain::BayerChannel::None
+            ? inherited
+            : domain::bayerChannelAt(
+                  geometry_.sourceBayerPattern, source->x, source->y);
+    }
+
 private:
     std::shared_ptr<const IPixelSource> source_;
     BayerPlaneGeometry geometry_;

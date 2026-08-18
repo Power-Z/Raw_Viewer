@@ -27,7 +27,7 @@ QString tickText(double value) {
 StatisticsChartWidget::StatisticsChartWidget(QWidget* parent)
     : QWidget(parent),
       emptyMessage_(tr("在图像上完成区域选择后显示结果")) {
-    setMinimumSize(520, 280);
+    setMinimumSize(240, 120);
     setAutoFillBackground(false);
 }
 

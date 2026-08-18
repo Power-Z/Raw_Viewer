@@ -30,12 +30,19 @@ PixelInfo queryPixelInfo(const DecodedImage& image,
     result.valid = true;
     result.originalValue = sample.value;
     result.processedValue = domain::mapDisplayValue(sample.value, mapping);
-    result.channel = domain::bayerChannelAt(image.metadata.bayerPattern, x, y);
+    result.channel = image.pixels->bayerChannel(x, y);
+    if (result.channel == domain::BayerChannel::None) {
+        result.channel = domain::bayerChannelAt(
+            image.metadata.bayerPattern, x, y);
+    }
     if (sample.rgbValid) {
         result.rgbValid = true;
-        result.red = mapByte(sample.red, mapping);
-        result.green = mapByte(sample.green, mapping);
-        result.blue = mapByte(sample.blue, mapping);
+        result.red = image.displayReadyRgb
+            ? sample.red : mapByte(sample.red, mapping);
+        result.green = image.displayReadyRgb
+            ? sample.green : mapByte(sample.green, mapping);
+        result.blue = image.displayReadyRgb
+            ? sample.blue : mapByte(sample.blue, mapping);
     } else if (image.metadata.kind != ImageKind::FlatRaw) {
         const auto gray = mapByte(sample.value, mapping);
         result.rgbValid = true;

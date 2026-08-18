@@ -6,13 +6,16 @@
 
 #include <QImage>
 #include <QPointF>
+#include <QStaticText>
 #include <QWidget>
 
 #include <memory>
+#include <vector>
 
 class QLabel;
 class QPainter;
 class QProgressBar;
+class QScrollBar;
 
 namespace rawviewer::presentation {
 
@@ -60,23 +63,60 @@ protected:
     void dropEvent(QDropEvent* event) override;
 
 private:
+    struct CachedOverlayCell {
+        qint64 x = 0;
+        qint64 y = 0;
+        domain::BayerChannel channel = domain::BayerChannel::None;
+        bool lightBackground = false;
+        QStaticText valueText;
+        int preparedValueFontPixels = 0;
+    };
+
     QPointF imageCoordinate(const QPointF& widgetPoint) const;
+    QRect canvasRect() const;
     void publishCoordinate(const QPointF& widgetPoint);
     void drawPixelOverlay(QPainter& painter);
     void drawStatisticsSelection(QPainter& painter);
+    void drawRulers(QPainter& painter);
+    void drawOverview(QPainter& painter);
     QPoint boundedImagePixel(const QPointF& widgetPoint) const;
+    void beginPan(const QPointF& position, Qt::MouseButton button);
+    void finishPan();
+    void updateNavigationGeometry();
+    void updateScrollBars();
+    void applyHorizontalScroll(int value);
+    void applyVerticalScroll(int value);
+    void invalidatePixelOverlayCache();
+    void ensurePixelOverlayCache(qint64 left,
+                                 qint64 top,
+                                 qint64 right,
+                                 qint64 bottom);
+    CachedOverlayCell makeOverlayCell(qint64 x, qint64 y) const;
+    CachedOverlayCell* cachedOverlayCell(qint64 x, qint64 y);
 
     std::shared_ptr<const application::DecodedImage> image_;
     QImage preview_;
     QWidget* loadingOverlay_ = nullptr;
     QLabel* loadingLabel_ = nullptr;
     QProgressBar* loadingProgress_ = nullptr;
+    QScrollBar* horizontalScrollBar_ = nullptr;
+    QScrollBar* verticalScrollBar_ = nullptr;
     double zoom_ = 1.0;
     QPointF offset_;
     QPointF lastMouse_;
     domain::DisplayMapping displayMapping_;
     PixelOverlayOptions overlayOptions_;
+    std::vector<CachedOverlayCell> overlayCellCache_;
+    const application::DecodedImage* overlayCacheImage_ = nullptr;
+    domain::DisplayMapping overlayCacheMapping_;
+    qint64 overlayCacheLeft_ = 0;
+    qint64 overlayCacheTop_ = 0;
+    qint64 overlayCacheRight_ = 0;
+    qint64 overlayCacheBottom_ = 0;
+    bool overlayCacheIncludesValues_ = false;
     bool dragging_ = false;
+    Qt::MouseButton draggingButton_ = Qt::NoButton;
+    bool updatingScrollBars_ = false;
     bool fitMode_ = true;
     StatisticsSelectionTool statisticsTool_ = StatisticsSelectionTool::None;
     bool statisticsSelectionStarted_ = false;

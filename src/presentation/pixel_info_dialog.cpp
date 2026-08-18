@@ -24,7 +24,7 @@ PixelInfoDialog::PixelInfoDialog(QWidget* parent)
     meshCheck_->setChecked(false);
     bayerLabelCheck_ = new QCheckBox(tr("Bayer pattern"), this);
     bayerLabelCheck_->setObjectName(QStringLiteral("bayerPatternCheck"));
-    bayerLabelCheck_->setChecked(true);
+    bayerLabelCheck_->setChecked(false);
     layout->addWidget(meshCheck_);
     layout->addWidget(bayerLabelCheck_);
     layout->addStretch();

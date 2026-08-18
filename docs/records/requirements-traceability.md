@@ -33,6 +33,13 @@
 | TOOL-008 | V0.6.3 Bayer Extract：常规小型帮助提示、自适应方形单元并删除顶部 Source 信息 | `docs/plans/v0.6.3-bayer-extract-ui.md`；`BayerExtractDialog::rebuildMatrix/adjustDialogSize/setSource`；2×2/4×4/8×8/Custom 尺寸及标签 UI 测试 | V0.6.3-01～03 | Verified |
 | VIEW-004 | V0.7 RAW 像素标注：纯数值、黑白自适应、默认无网格、1/7 字高及交互性能优化 | `docs/plans/v0.7-pixel-value-overlay.md`；`ImageViewport::drawPixelOverlay/mousePressEvent/wheelEvent`、`PixelInfoDialog`；黑白 RAW 离屏渲染与交互期间零像素查询测试 | V0.7-01～05 | Verified |
 | VIEW-005 | V0.7.1 连续像素标注：无闪烁跟随、全可见像素、自动 RAW/RGB 值、RGGB 四色遮罩和右下角 Pattern | `docs/plans/v0.7.1-continuous-pixel-overlay.md`；`ImageViewport::drawPixelOverlay`、`PixelInfoDialog`；连续拖拽/滚轮、500 像素、四色遮罩、RGB 自动格式 UI 测试 | V0.7.1-01～06 | Verified |
+| VIEW-006 | V0.7.2 像素标注：初始自动启用、Pattern 四通道独立字体颜色、可见区域标签缓存与静态文本复用 | `docs/plans/v0.7.2-pixel-overlay-optimization.md`；`MainWindow` 初始选项同步、`ImageViewport` 有界缓存；初始显示、缓存复用和四色字体离屏 UI 测试 | V0.7.2-01～03 | Verified |
+| TOOL-009 | V0.7.3 Pixel Statistics：统计当前显示 RAW 管线、拖拽选择、紧凑专业分格 UI | `docs/plans/v0.7.3-pixel-statistics-optimization.md`；`MainWindow::openPixelStatistics/beginPixelStatistics`、`ImageViewport`、`PixelStatisticsDialog`；提取结果黄金测试及端到端 UI 测试 | V0.7.3-01～03 | Verified |
+| TOOL-010 | V0.7.4 Pixel Statistics：Channel 复选后显示 R/Gr/Gb/B 四结果；图表参数移至 Preferences，线宽默认 1 | `docs/plans/v0.7.4-pixel-statistics-channels-preferences.md`；`PixelStatisticsService::executeChannels`、`PixelStatisticsDialog::showPreferences/setResults`；单遍扫描、四面板、端到端和持久化测试 | V0.7.4-01～02 | Verified |
+| VIEW-007 | V0.7.5 提取结果像素标注：连续 Extract 均从 original 开始；数值读取当前显示提取源；紧凑输出保留源 Bayer 通道标注 | `docs/plans/v0.7.5-extracted-pixel-annotation.md`；`IPixelSource::bayerChannel`、`BayerPlanePixelSource`、`queryPixelInfo`、`ImageViewport`；连续提取精确值与提取后离屏标注测试 | V0.7.5-01～03 | Verified |
+| VIEW-008 | V0.7.6 RAW 视口综合导航：中键平移、上下像素标尺、全图缩略视野框、底部/右侧滚动条、默认关闭 Bayer pattern | `docs/plans/v0.7.6-viewport-navigation.md`；`ImageViewport::canvasRect/drawRulers/drawOverview/updateScrollBars`、`PixelInfoDialog`；中键工具模式、刻度对齐、缩略图和滚动条离屏/UI 测试 | V0.7.6-01～05 | Verified |
+| TOOL-011 | V0.7.7 Filter：当前显示 RAW 的 Mean/Gaussian/Median、kernel 子窗口和大图性能优化 | `docs/plans/v0.7.7-filter-tool.md`；`FilterService`、`FilteredPixelSource`、`FilterDialog`、`MainWindow::beginFilter`；算法黄金值、惰性链、瓦片读取次数、预览上限和提取后端到端 UI 测试 | V0.7.7-01～04 | Verified |
+| TOOL-012 | V0.7.8 Bayer Demosaic：三种常用算法、当前规则 Bayer RAW、专业子窗口和惰性 RGB 性能设计 | `docs/plans/v0.7.8-bayer-demosaic.md`；`DemosaicService`、`DemosaicedPixelSource`、`DemosaicDialog`、`MainWindow::beginDemosaic`；四 pattern×三算法、脉冲系数、瓦片读取、不可用状态及 Filter→Demosaic UI 测试 | V0.7.8-01～05 | Verified |
 | TOOL-004 | 预留复杂 ISP 工具 | 架构 12 | P2-01，持续 | Planned |
 
 ## 追踪规则

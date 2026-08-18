@@ -1,7 +1,7 @@
 # 项目状态
 
 - 当前版本阶段：V0.3 非破坏处理与基础分析（实施中）
-- 状态日期：2026-08-01
+- 状态日期：2026-08-19
 - 默认分支：`main`
 
 ## 已完成
@@ -36,6 +36,13 @@
 - 完成 V0.6.3 Bayer Extract：18 px 无边框帮助提示、48/36/24/12 px 自适应矩阵单元并移除顶部 Source 信息；
 - 完成 V0.7 RAW 像素标注：纯数值、黑白自适应字体、默认无网格、1/7 字高以及拖拽/滚轮期间暂停标注查询；
 - 完成 V0.7.1 像素标注：取消交互暂停与标签上限、RAW/RGB 自动值、全可见像素覆盖、四色 Bayer 遮罩、右下角 Pattern 和精简 Pixel Info；
+- 完成 V0.7.2 像素标注：启动即同步默认叠加选项、Pattern 四通道独立字体颜色、可见区域有界缓存和静态文字布局复用；
+- 完成 V0.7.3 Pixel Statistics：统计源切换为当前显示 RAW 管线，选择交互改为按下—拖拽—松开，窗口改为紧凑 MODE/ANALYSIS/PLOT 技术面板；
+- 完成 V0.7.4 Pixel Statistics：Bayer channels 复选后单遍扫描并显示 R/Gr/Gb/B 四结果；图表参数移入持久化 Preferences，默认线宽改为 1；
+- 完成 V0.7.5 提取结果像素标注：排除多次 Extract 串接，紧凑输出按原图坐标恢复 R/Gr/Gb/B 标注，数值保持读取当前显示源；
+- 完成 V0.7.6 视口综合导航：中键平移、上下像素标尺、固定全图缩略导航、底部/右侧同步滚动条和默认关闭 Bayer pattern；
+- 完成 V0.7.7 Filter：当前显示 RAW 的 Mean/Gaussian/Median、3/5/7 kernel 专业紧凑子窗口，以及 1024 预览、可分离卷积、滑动中位数和有界惰性瓦片优化；
+- 完成 V0.7.8 Bayer Demosaic：Bilinear、Malvar-He-Cutler、Hamilton-Adams，当前规则 Bayer 输入、专业紧凑子窗口、输入恢复和有界惰性 RGB 管线；
 - 单通道使用只读 2×2 像素源视图，不复制四分之一幅完整通道数据。
 - 完成 P2-05 Pixel Statistics：Status、Horizontal Box、Vertical Box、Line、WB 预留、两次点击选择、Bayer 分通道、后台进度/取消和有界图表。
 
@@ -103,5 +110,13 @@ V0.3：完成像素信息、Bayer 提取、ROI 基础统计与双图对比闭环
 | 2026-08-18 | V0.6.3 Bayer Extract UI | 2×2/4×4/8×8/大尺寸自定义单元分别验证为 48/36/24/12 px；18 px 无边框帮助及 Source 标签移除测试通过 |
 | 2026-08-18 | V0.7 RAW 像素标注 | 2×1 黑白 UInt16 RAW 离屏渲染验证纯数值、黑底白字/白底黑字、约 1/7 字高；拖拽和滚轮暂停期间像素查询为零增长，Debug/Release UI 测试通过 |
 | 2026-08-18 | V0.7.1 连续像素标注 | 拖拽/滚轮逐帧标注、25×20 全部 500 像素无抽样、RGB 自动值、RGGB 四色遮罩与右下角 Pattern 离屏测试通过 |
+| 2026-08-19 | V0.7.2 像素标注优化 | 未打开 Pixel Info 的初始标注、R/Gr/Gb/B 独立字体颜色、重复绘制与平移缩放缓存复用测试通过；Debug/Release CTest 4/4 |
+| 2026-08-19 | V0.7.3 Pixel Statistics 优化 | 提取结果统计黄金值、拖拽矩形/Line、紧凑三段 UI，以及 10×10 原图提取为 5×5 后保持当前显示源的端到端测试通过；Debug/Release CTest 均 4/4 |
+| 2026-08-19 | V0.7.4 Pixel Statistics 优化 | 4×4 RGGB 单遍 16 次读取产生四通道黄金值；10×10 端到端四通道各 25 样本；四面板、偏好默认值与持久化 UI 测试通过；Debug/Release CTest 均 4/4 |
+| 2026-08-19 | V0.7.5 提取结果像素标注 | 连续 original→R、original→Gr 提取验证第二次值为 1/3/21/23，主窗口端到端确认 `(0,0) → Source (1,0) / Raw 1`；紧凑结果按源坐标恢复 Gr mesh/pattern；Debug/Release CTest 均 4/4 |
+| 2026-08-19 | V0.7.6 视口综合导航 | 统计工具激活时中键平移不触发选择；上下标尺坐标 5 与同一像素边界对齐；缩略视野框随缩放变小，底部/右侧滚动条与源坐标同步；Bayer pattern 默认关闭；Debug/Release CTest 均 4/4 |
+| 2026-08-19 | V0.7.7 Filter | Mean/Gaussian/Median 黄金值、当前显示链、取消/非法参数、1024 预览和宽图瓦片行复用通过；10×10→5×5 Bayer Extract 后 Mean 输出角点 7.333…；Debug/Release CTest 均 4/4 |
+| 2026-08-19 | V0.7.8 Bayer Demosaic | 四种 Bayer 排列×三算法常量黄金值、三种脉冲系数、1024 预览、双瓦片 9,800 次读取和恢复输入通过；Mean Filter→Bilinear 端到端 RGB 37,51,61；Debug/Release CTest 均 4/4 |
 | 2026-08-16 | `v0.3.0-preview.1` 发布 | Windows x64 便携包包含 Qt 6.8.3、LibRaw 0.22.2、MSVC CRT、许可证与 SHA-256；包内依赖加载和启动冒烟测试通过，以 GitHub prerelease 发布 |
 | 2026-08-18 | `v0.3.0-preview.2` 发布 | 汇总 Recent Files、V0.4～V0.7.1；Debug/Release 4/4，便携包包含完整运行库、用户指南、Release Notes 和 SHA-256，以 GitHub prerelease 发布 |
+| 2026-08-19 | `v0.3.0-preview.3` 发布 | 汇总 V0.7.2～V0.7.8；Debug/Release 4/4，上传完整便携 ZIP、SHA-256 和同构建 RawViewer.exe，以 GitHub prerelease 发布 |

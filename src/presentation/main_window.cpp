@@ -1,6 +1,8 @@
 #include "presentation/main_window.h"
 
 #include "presentation/bayer_extract_dialog.h"
+#include "presentation/demosaic_dialog.h"
+#include "presentation/filter_dialog.h"
 #include "presentation/histogram_widget.h"
 #include "presentation/image_viewport.h"
 #include "presentation/pixel_info_dialog.h"
@@ -40,8 +42,10 @@
 #include <QVBoxLayout>
 #include <QtConcurrent>
 
-#include <filesystem>
 #include <algorithm>
+#include <filesystem>
+#include <string>
+#include <vector>
 
 namespace rawviewer::presentation {
 namespace {
@@ -69,6 +73,8 @@ MainWindow::MainWindow(
     resize(1440, 900);
     pixelInfoDialog_ = new PixelInfoDialog(this);
     bayerExtractDialog_ = new BayerExtractDialog(this);
+    demosaicDialog_ = new DemosaicDialog(this);
+    filterDialog_ = new FilterDialog(this);
     pixelStatisticsDialog_ = new PixelStatisticsDialog(this);
     createMenus();
     createStatusBar();
@@ -109,6 +115,7 @@ MainWindow::MainWindow(
             &PixelInfoDialog::optionsChanged,
             viewport_,
             &ImageViewport::setPixelOverlayOptions);
+    viewport_->setPixelOverlayOptions(pixelInfoDialog_->options());
     connect(bayerExtractDialog_,
             &BayerExtractDialog::extractRequested,
             this,
@@ -117,6 +124,18 @@ MainWindow::MainWindow(
             &BayerExtractDialog::showOriginalRequested,
             this,
             &MainWindow::showOriginalImage);
+    connect(filterDialog_,
+            &FilterDialog::applyRequested,
+            this,
+            &MainWindow::beginFilter);
+    connect(demosaicDialog_,
+            &DemosaicDialog::applyRequested,
+            this,
+            &MainWindow::beginDemosaic);
+    connect(demosaicDialog_,
+            &DemosaicDialog::restoreSourceRequested,
+            this,
+            &MainWindow::restoreDemosaicSource);
     connect(pixelStatisticsDialog_,
             &PixelStatisticsDialog::modeChanged,
             this,
@@ -168,6 +187,12 @@ MainWindow::~MainWindow() {
     }
     if (statisticsCancellation_) {
         statisticsCancellation_->store(true);
+    }
+    if (filterCancellation_) {
+        filterCancellation_->store(true);
+    }
+    if (demosaicCancellation_) {
+        demosaicCancellation_->store(true);
     }
 }
 
@@ -229,6 +254,15 @@ void MainWindow::createMenus() {
             setTheme(theme);
         });
     }
+    preferences->addSeparator();
+    auto* statisticsPreferences =
+        preferences->addAction(tr("Pixel Statistics…"));
+    statisticsPreferences->setObjectName(
+        QStringLiteral("pixelStatisticsPreferencesAction"));
+    connect(statisticsPreferences,
+            &QAction::triggered,
+            pixelStatisticsDialog_,
+            &PixelStatisticsDialog::showPreferences);
 
     auto* toolMenu = menuBar()->addMenu(tr("Tool(&T)"));
     pixelInfoAction_ = toolMenu->addAction(tr("Pixel Info"));
@@ -243,20 +277,30 @@ void MainWindow::createMenus() {
     bayerExtractAction_->setEnabled(false);
     connect(bayerExtractAction_, &QAction::triggered,
             this, &MainWindow::openBayerExtract);
+    filterAction_ = toolMenu->addAction(tr("Filter"));
+    filterAction_->setEnabled(false);
+    connect(filterAction_, &QAction::triggered,
+            this, &MainWindow::openFilter);
+    demosaicAction_ = toolMenu->addAction(tr("Demosaic"));
+    demosaicAction_->setEnabled(false);
+    connect(demosaicAction_, &QAction::triggered,
+            this, &MainWindow::openDemosaic);
 
     auto* helpMenu = menuBar()->addMenu(tr("帮助(&H)"));
     helpMenu->addAction(tr("关于 Raw Viewer"), this, [this] {
         QMessageBox::about(
             this,
             tr("关于 Raw Viewer"),
-            tr("<b>Raw Viewer 0.3.0-preview.2</b><br>"
-               "第二阶段：非破坏显示处理、Pixel Info、Bayer Extract 与 Pixel Statistics。<br>"
+            tr("<b>Raw Viewer 0.3.0-preview.3</b><br>"
+               "第二阶段：非破坏显示处理、Pixel Info、Bayer Extract、"
+               "Pixel Statistics、Filter 与 Bayer Demosaic。<br>"
                "输入文件和原始像素始终保持只读。"));
     });
 }
 
 void MainWindow::createStatusBar() {
     coordinateLabel_ = new QLabel(tr("坐标 —"), this);
+    coordinateLabel_->setObjectName(QStringLiteral("coordinateLabel"));
     imageLabel_ = new QLabel(tr("未打开图像"), this);
     zoomLabel_ = new QLabel(tr("缩放 —"), this);
     taskLabel_ = new QLabel(tr("就绪"), this);
@@ -457,6 +501,16 @@ QWidget* MainWindow::createRightPanel() {
     connect(statisticsButton_, &QPushButton::clicked,
             this, &MainWindow::openPixelStatistics);
     toolLayout->addWidget(statisticsButton_);
+    filterButton_ = new QPushButton(tr("Filter"), tools);
+    filterButton_->setEnabled(false);
+    connect(filterButton_, &QPushButton::clicked,
+            this, &MainWindow::openFilter);
+    toolLayout->addWidget(filterButton_);
+    demosaicButton_ = new QPushButton(tr("Demosaic"), tools);
+    demosaicButton_->setEnabled(false);
+    connect(demosaicButton_, &QPushButton::clicked,
+            this, &MainWindow::openDemosaic);
+    toolLayout->addWidget(demosaicButton_);
     auto* reserved = new QPushButton(tr("ISP tools — reserved"), tools);
     reserved->setEnabled(false);
     toolLayout->addWidget(reserved);
@@ -603,6 +657,8 @@ void MainWindow::beginOpen(const QString& path) {
         exportCancellation_.reset();
     }
     cancelPixelStatistics();
+    cancelFilter();
+    cancelDemosaic();
     statisticsSelection_.reset();
     viewport_->setStatisticsSelectionTool(StatisticsSelectionTool::None);
     ++bayerGeneration_;
@@ -659,28 +715,27 @@ void MainWindow::beginOpen(const QString& path) {
 
 void MainWindow::showDecoded(
     std::shared_ptr<const application::DecodedImage> image) {
+    // A filter can be launched from the previous document while a new open is
+    // still decoding. Invalidate it again at the document hand-off so that its
+    // late result can never replace the newly decoded display source.
+    cancelFilter();
+    cancelDemosaic();
     documentSession_ =
         std::make_unique<application::DocumentSession>(std::move(image));
     bayerExtraction_.reset();
+    preDemosaicSource_.reset();
     displaySource_ = documentSession_->original();
     bayerExtractDialog_->setResult(nullptr);
     bayerExtractDialog_->setSource(&displaySource_->metadata);
     pixelStatisticsDialog_->setSource(&displaySource_->metadata);
+    filterDialog_->setSource(&displaySource_->metadata);
+    demosaicDialog_->setSource(&displaySource_->metadata);
     pendingCoordinateInside_ = false;
     coordinateLabel_->setText(tr("坐标 —"));
     syncDisplayControls();
     renderCurrentDisplay(false);
     updateUndoActions();
-    pixelInfoAction_->setEnabled(true);
-    pixelInfoButton_->setEnabled(true);
-    const bool supportsRaw =
-        displaySource_->metadata.kind != application::ImageKind::Standard;
-    const bool supportsBayerStatistics = supportsRaw &&
-        displaySource_->metadata.bayerPattern != domain::BayerPattern::None;
-    bayerExtractAction_->setEnabled(supportsRaw);
-    bayerExtractButton_->setEnabled(supportsRaw);
-    statisticsAction_->setEnabled(supportsBayerStatistics);
-    statisticsButton_->setEnabled(supportsBayerStatistics);
+    syncToolAvailability();
     imageLabel_->setText(metadataSummary(currentImage_->metadata));
     setWindowTitle(QStringLiteral("%1 — Raw Viewer")
                        .arg(QString::fromStdString(currentImage_->metadata.camera)
@@ -730,12 +785,13 @@ void MainWindow::syncDisplayControls() {
     blackPointSpin_->setValue(mapping.blackPoint);
     whitePointSpin_->setValue(mapping.whitePoint);
     gammaSpin_->setValue(mapping.gamma);
-    const bool directGrayscale =
-        documentSession_->original()->preview.hasGrayscale16();
-    blackPointSpin_->setEnabled(!directGrayscale);
-    whitePointSpin_->setEnabled(!directGrayscale);
-    gammaSpin_->setEnabled(!directGrayscale);
-    resetDisplayButton_->setEnabled(!directGrayscale);
+    const bool controlsUnavailable =
+        documentSession_->original()->preview.hasGrayscale16() ||
+        (displaySource_ && displaySource_->displayReadyRgb);
+    blackPointSpin_->setEnabled(!controlsUnavailable);
+    whitePointSpin_->setEnabled(!controlsUnavailable);
+    gammaSpin_->setEnabled(!controlsUnavailable);
+    resetDisplayButton_->setEnabled(!controlsUnavailable);
 }
 
 void MainWindow::renderCurrentDisplay(bool preserveView) {
@@ -761,6 +817,28 @@ void MainWindow::updateUndoActions() {
     const bool hasDocument = static_cast<bool>(documentSession_);
     undoAction_->setEnabled(hasDocument && documentSession_->canUndo());
     redoAction_->setEnabled(hasDocument && documentSession_->canRedo());
+}
+
+void MainWindow::syncToolAvailability() {
+    const bool hasDocument = documentSession_ && displaySource_;
+    const bool currentRaw = hasDocument &&
+        displaySource_->metadata.kind != application::ImageKind::Standard;
+    const bool regularBayer = currentRaw &&
+        displaySource_->metadata.bayerPattern != domain::BayerPattern::None;
+    const bool originalRaw = documentSession_ &&
+        documentSession_->original()->metadata.kind !=
+            application::ImageKind::Standard;
+
+    pixelInfoAction_->setEnabled(hasDocument);
+    pixelInfoButton_->setEnabled(hasDocument);
+    bayerExtractAction_->setEnabled(originalRaw);
+    bayerExtractButton_->setEnabled(originalRaw);
+    filterAction_->setEnabled(currentRaw);
+    filterButton_->setEnabled(currentRaw);
+    statisticsAction_->setEnabled(currentRaw);
+    statisticsButton_->setEnabled(currentRaw);
+    demosaicAction_->setEnabled(regularBayer);
+    demosaicButton_->setEnabled(regularBayer);
 }
 
 void MainWindow::setTheme(const QString& name) {
@@ -854,6 +932,31 @@ void MainWindow::openPixelInfo() {
     pixelInfoDialog_->activateWindow();
 }
 
+void MainWindow::openFilter() {
+    const auto source = displaySource_;
+    if (!documentSession_ || !source ||
+        source->metadata.kind == application::ImageKind::Standard) {
+        return;
+    }
+    filterDialog_->setSource(&source->metadata);
+    filterDialog_->show();
+    filterDialog_->raise();
+    filterDialog_->activateWindow();
+}
+
+void MainWindow::openDemosaic() {
+    const auto source = displaySource_;
+    if (!documentSession_ || !source ||
+        source->metadata.kind == application::ImageKind::Standard ||
+        source->metadata.bayerPattern == domain::BayerPattern::None) {
+        return;
+    }
+    demosaicDialog_->setSource(&source->metadata);
+    demosaicDialog_->show();
+    demosaicDialog_->raise();
+    demosaicDialog_->activateWindow();
+}
+
 void MainWindow::openBayerExtract() {
     if (!documentSession_ ||
         documentSession_->original()->metadata.kind ==
@@ -867,17 +970,14 @@ void MainWindow::openBayerExtract() {
 }
 
 void MainWindow::openPixelStatistics() {
-    if (!documentSession_) {
+    const auto source = displaySource_;
+    if (!documentSession_ || !source) {
         return;
     }
-    const auto& metadata = documentSession_->original()->metadata;
-    if (metadata.kind == application::ImageKind::Standard ||
-        metadata.bayerPattern == domain::BayerPattern::None) {
+    if (source->metadata.kind == application::ImageKind::Standard) {
         return;
     }
-    if (displaySource_.get() != documentSession_->original().get()) {
-        showOriginalImage();
-    }
+    pixelStatisticsDialog_->setSource(&source->metadata);
     setStatisticsMode(pixelStatisticsDialog_->mode());
     pixelStatisticsDialog_->show();
     pixelStatisticsDialog_->raise();
@@ -907,7 +1007,9 @@ void MainWindow::setStatisticsMode(
 
 void MainWindow::beginPixelStatistics(
     const application::StatisticsSelection& selection) {
-    if (!documentSession_ ||
+    const auto source = displaySource_;
+    if (!documentSession_ || !source ||
+        source->metadata.kind == application::ImageKind::Standard ||
         pixelStatisticsDialog_->mode() ==
             application::PixelStatisticsMode::WhiteBalance) {
         return;
@@ -922,49 +1024,70 @@ void MainWindow::beginPixelStatistics(
     const auto progress = statisticsProgress_;
     const auto generation = ++statisticsGeneration_;
 
-    application::PixelStatisticsRequest request;
-    request.source = documentSession_->original();
-    request.mode = pixelStatisticsDialog_->mode();
-    request.selection = selection;
-    request.channel = pixelStatisticsDialog_->channel();
-    request.histogramBins = pixelStatisticsDialog_->histogramBins();
-    request.cancellation = token;
-    request.progressPermille = progress;
+    application::PixelStatisticsRequest baseRequest;
+    baseRequest.source = source;
+    baseRequest.mode = pixelStatisticsDialog_->mode();
+    baseRequest.selection = selection;
+    baseRequest.histogramBins = pixelStatisticsDialog_->histogramBins();
+    baseRequest.cancellation = token;
+    baseRequest.progressPermille = progress;
+    const bool splitChannels = pixelStatisticsDialog_->channelsEnabled();
     pixelStatisticsDialog_->setSelection(selection);
     pixelStatisticsDialog_->setBusy(true, progress);
-    taskLabel_->setText(tr("正在统计原始 Bayer 像素…"));
+    taskLabel_->setText(tr("正在统计当前显示 RAW…"));
 
-    auto* watcher =
-        new QFutureWatcher<application::PixelStatisticsResult>(this);
+    auto* watcher = new QFutureWatcher<
+        std::vector<application::PixelStatisticsResult>>(this);
     connect(watcher,
-            &QFutureWatcher<application::PixelStatisticsResult>::finished,
+            &QFutureWatcher<
+                std::vector<application::PixelStatisticsResult>>::finished,
             this,
             [this, watcher, generation, token] {
-        const auto result = watcher->result();
+        const auto results = watcher->result();
         watcher->deleteLater();
         if (generation != statisticsGeneration_ ||
             token != statisticsCancellation_) {
             return;
         }
         pixelStatisticsDialog_->setBusy(false);
-        if (!result.succeeded()) {
-            if (result.errorCode == "task.cancelled") {
+        const auto failed = std::find_if(
+            results.begin(), results.end(), [](const auto& result) {
+                return !result.succeeded() &&
+                    result.errorCode != "statistics.empty_selection";
+            });
+        if (results.empty() || failed != results.end()) {
+            const auto errorCode = results.empty()
+                ? std::string("statistics.no_results")
+                : failed->errorCode;
+            const auto message = results.empty()
+                ? std::string("No statistics results were produced.")
+                : failed->message;
+            if (errorCode == "task.cancelled") {
                 taskLabel_->setText(tr("像素统计已取消"));
                 pixelStatisticsDialog_->clearResult(tr("计算已取消。"));
             } else {
                 taskLabel_->setText(tr("像素统计失败"));
                 pixelStatisticsDialog_->clearResult(
-                    QString::fromStdString(result.message));
+                    QString::fromStdString(message));
             }
             return;
         }
-        pixelStatisticsDialog_->setResult(result);
+        pixelStatisticsDialog_->setResults(results);
+        std::uint64_t totalCount = 0;
+        for (const auto& result : results) {
+            totalCount += result.summary.count;
+        }
         taskLabel_->setText(
-            tr("统计完成：%1 个结果样本").arg(result.summary.count));
+            tr("统计完成：%1 个结果样本").arg(totalCount));
     });
     const auto service = pixelStatisticsService_;
-    watcher->setFuture(QtConcurrent::run([service, request] {
-        return service.execute(request);
+    watcher->setFuture(QtConcurrent::run(
+        [service, baseRequest, splitChannels] {
+        if (splitChannels) {
+            return service.executeChannels(baseRequest);
+        }
+        return std::vector<application::PixelStatisticsResult>{
+            service.execute(baseRequest)};
     }));
 }
 
@@ -980,11 +1103,173 @@ void MainWindow::cancelPixelStatistics() {
     }
 }
 
+void MainWindow::beginFilter() {
+    const auto source = displaySource_;
+    if (!documentSession_ || !source ||
+        source->metadata.kind == application::ImageKind::Standard) {
+        return;
+    }
+    cancelPixelStatistics();
+    statisticsSelection_.reset();
+    viewport_->clearStatisticsSelection();
+    viewport_->setStatisticsSelectionTool(StatisticsSelectionTool::None);
+    pixelStatisticsDialog_->hide();
+    cancelDemosaic();
+    cancelFilter();
+    filterCancellation_ = std::make_shared<std::atomic_bool>(false);
+    const auto token = filterCancellation_;
+    const auto generation = ++filterGeneration_;
+    const auto request = filterDialog_->request(source, token);
+    filterDialog_->setBusy(true, tr("Building bounded preview…"));
+    taskLabel_->setText(tr("正在滤波当前显示 RAW…"));
+
+    auto* watcher = new QFutureWatcher<application::FilterResult>(this);
+    connect(watcher, &QFutureWatcher<application::FilterResult>::finished,
+            this, [this, watcher, generation, token] {
+        const auto result = watcher->result();
+        watcher->deleteLater();
+        if (generation != filterGeneration_ || token != filterCancellation_) {
+            return;
+        }
+        filterDialog_->setBusy(false);
+        if (!result.succeeded()) {
+            taskLabel_->setText(result.errorCode == "task.cancelled"
+                ? tr("图像滤波已取消")
+                : tr("图像滤波失败"));
+            if (result.errorCode != "task.cancelled") {
+                QMessageBox::warning(this, tr("Image Filter"),
+                    QString::fromStdString(result.message));
+            }
+            return;
+        }
+        displaySource_ = result.image;
+        pendingCoordinateInside_ = false;
+        coordinateLabel_->setText(tr("坐标 —"));
+        pixelStatisticsDialog_->setSource(&displaySource_->metadata);
+        filterDialog_->setSource(&displaySource_->metadata);
+        filterDialog_->setResult(&displaySource_->metadata);
+        demosaicDialog_->setSource(&displaySource_->metadata);
+        syncDisplayControls();
+        syncToolAvailability();
+        renderCurrentDisplay(true);
+        taskLabel_->setText(tr("滤波完成：%1")
+            .arg(QString::fromStdString(displaySource_->metadata.format)));
+    });
+    const auto service = filterService_;
+    watcher->setFuture(QtConcurrent::run([service, request] {
+        return service.execute(request);
+    }));
+}
+
+void MainWindow::cancelFilter() {
+    if (filterCancellation_) {
+        filterCancellation_->store(true, std::memory_order_relaxed);
+        filterCancellation_.reset();
+    }
+    ++filterGeneration_;
+    if (filterDialog_) {
+        filterDialog_->setBusy(false);
+    }
+}
+
+void MainWindow::beginDemosaic() {
+    const auto source = displaySource_;
+    if (!documentSession_ || !source ||
+        source->metadata.kind == application::ImageKind::Standard ||
+        source->metadata.bayerPattern == domain::BayerPattern::None) {
+        return;
+    }
+    cancelPixelStatistics();
+    statisticsSelection_.reset();
+    viewport_->clearStatisticsSelection();
+    viewport_->setStatisticsSelectionTool(StatisticsSelectionTool::None);
+    pixelStatisticsDialog_->hide();
+    cancelFilter();
+    cancelDemosaic();
+    demosaicCancellation_ = std::make_shared<std::atomic_bool>(false);
+    const auto token = demosaicCancellation_;
+    const auto generation = ++demosaicGeneration_;
+    const auto request = demosaicDialog_->request(
+        source, documentSession_->displayMapping(), token);
+    demosaicDialog_->setBusy(true, tr("Building bounded RGB preview…"));
+    taskLabel_->setText(tr("正在对当前 Bayer RAW 去马赛克…"));
+
+    auto* watcher = new QFutureWatcher<application::DemosaicResult>(this);
+    connect(watcher, &QFutureWatcher<application::DemosaicResult>::finished,
+            this, [this, watcher, generation, token, source] {
+        const auto result = watcher->result();
+        watcher->deleteLater();
+        if (generation != demosaicGeneration_ ||
+            token != demosaicCancellation_) {
+            return;
+        }
+        demosaicDialog_->setBusy(false);
+        if (!result.succeeded()) {
+            taskLabel_->setText(result.errorCode == "task.cancelled"
+                ? tr("Demosaic 已取消") : tr("Demosaic 失败"));
+            if (result.errorCode != "task.cancelled") {
+                QMessageBox::warning(this, tr("Bayer Demosaic"),
+                    QString::fromStdString(result.message));
+            }
+            return;
+        }
+        preDemosaicSource_ = source;
+        displaySource_ = result.image;
+        pendingCoordinateInside_ = false;
+        coordinateLabel_->setText(tr("坐标 —"));
+        pixelStatisticsDialog_->setSource(&displaySource_->metadata);
+        filterDialog_->setSource(&displaySource_->metadata);
+        demosaicDialog_->setSource(&displaySource_->metadata);
+        demosaicDialog_->setResult(&displaySource_->metadata);
+        syncDisplayControls();
+        syncToolAvailability();
+        renderCurrentDisplay(true);
+        taskLabel_->setText(tr("Demosaic 完成：%1")
+            .arg(QString::fromStdString(displaySource_->metadata.format)));
+    });
+    const auto service = demosaicService_;
+    watcher->setFuture(QtConcurrent::run([service, request] {
+        return service.execute(request);
+    }));
+}
+
+void MainWindow::cancelDemosaic() {
+    if (demosaicCancellation_) {
+        demosaicCancellation_->store(true, std::memory_order_relaxed);
+        demosaicCancellation_.reset();
+    }
+    ++demosaicGeneration_;
+    if (demosaicDialog_) {
+        demosaicDialog_->setBusy(false);
+    }
+}
+
+void MainWindow::restoreDemosaicSource() {
+    if (!documentSession_ || !preDemosaicSource_) {
+        return;
+    }
+    cancelDemosaic();
+    displaySource_ = preDemosaicSource_;
+    preDemosaicSource_.reset();
+    pixelStatisticsDialog_->setSource(&displaySource_->metadata);
+    filterDialog_->setSource(&displaySource_->metadata);
+    demosaicDialog_->setSource(&displaySource_->metadata);
+    pendingCoordinateInside_ = false;
+    coordinateLabel_->setText(tr("坐标 —"));
+    syncDisplayControls();
+    syncToolAvailability();
+    renderCurrentDisplay(true);
+    taskLabel_->setText(tr("已恢复 Demosaic 输入 Bayer RAW"));
+}
+
 void MainWindow::beginBayerExtraction() {
     if (!documentSession_) {
         return;
     }
     cancelPixelStatistics();
+    cancelFilter();
+    cancelDemosaic();
+    preDemosaicSource_.reset();
     statisticsSelection_.reset();
     viewport_->setStatisticsSelectionTool(StatisticsSelectionTool::None);
     pixelStatisticsDialog_->hide();
@@ -1031,6 +1316,11 @@ void MainWindow::beginBayerExtraction() {
         pendingCoordinateInside_ = false;
         coordinateLabel_->setText(tr("坐标 —"));
         bayerExtractDialog_->setResult(bayerExtraction_.get());
+        pixelStatisticsDialog_->setSource(&displaySource_->metadata);
+        filterDialog_->setSource(&displaySource_->metadata);
+        demosaicDialog_->setSource(&displaySource_->metadata);
+        syncDisplayControls();
+        syncToolAvailability();
         renderCurrentDisplay(false);
         taskLabel_->setText(tr("已显示 %1 提取结果")
             .arg(QString::fromStdString(bayerExtraction_->geometry.mask.name)));
@@ -1045,10 +1335,21 @@ void MainWindow::showOriginalImage() {
     if (!documentSession_) {
         return;
     }
+    cancelPixelStatistics();
+    cancelFilter();
+    cancelDemosaic();
+    preDemosaicSource_.reset();
+    statisticsSelection_.reset();
+    viewport_->clearStatisticsSelection();
     displaySource_ = documentSession_->original();
+    pixelStatisticsDialog_->setSource(&displaySource_->metadata);
+    filterDialog_->setSource(&displaySource_->metadata);
+    demosaicDialog_->setSource(&displaySource_->metadata);
     pendingCoordinateInside_ = false;
     coordinateLabel_->setText(tr("坐标 —"));
     renderCurrentDisplay(false);
+    syncDisplayControls();
+    syncToolAvailability();
     taskLabel_->setText(tr("已显示原始 Bayer 图像"));
 }
 

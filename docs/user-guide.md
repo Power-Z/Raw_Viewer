@@ -1,14 +1,14 @@
 # Raw Viewer 用户指南
 
-适用版本：`v0.3.0-preview.2`，Windows 10/11 x64。
+适用版本：`v0.3.0-preview.3`，Windows 10/11 x64。
 
 ## 1. 获取与运行
 
-1. 从 [GitHub Releases](https://github.com/Power-Z/Raw_Viewer/releases) 下载 `RawViewer-v0.3.0-preview.2-windows-x64.zip` 及同名 `.sha256` 文件。
+1. 从 [GitHub Releases](https://github.com/Power-Z/Raw_Viewer/releases) 下载 `RawViewer-v0.3.0-preview.3-windows-x64.zip` 及同名 `.sha256` 文件。
 2. 在 PowerShell 中校验：
 
    ```powershell
-   Get-FileHash .\RawViewer-v0.3.0-preview.2-windows-x64.zip -Algorithm SHA256
+   Get-FileHash .\RawViewer-v0.3.0-preview.3-windows-x64.zip -Algorithm SHA256
    ```
 
    输出应与 `.sha256` 文件一致。
@@ -61,8 +61,12 @@ TIFF/DNG/厂商 RAW 先按内容签名识别，再由 LibRaw 读取尺寸、数�
 
 ## 4. 浏览与显示
 
-- 左键拖拽：平移图像；
+- 左键拖拽：未启用区域选择工具时平移图像；
+- 中键拖拽：始终平移图像，Pixel Statistics 等工具占用左键时也可使用；
 - 鼠标滚轮：以鼠标位置为锚点缩放；
+- 顶部和底部标尺：显示与源像素边界严格对齐的水平坐标；
+- 右上角缩略图：固定显示完整图像，橙色矩形表示当前可见区域；
+- 底部和右侧滚动条：图像超出显示区域时启用，可拖动到其他位置；
 - 打开新图时：自动适合窗口；
 - 状态栏：显示坐标、Raw/Display/RGB 信息、Bayer 通道和缩放比例。
 
@@ -70,13 +74,13 @@ TIFF/DNG/厂商 RAW 先按内容签名识别，再由 LibRaw 读取尺寸、数�
 
 ## 5. Pixel Info
 
-Pixel Info 仅包含三个选项：
+像素值标注在应用启动后默认启用，不需要先打开 Pixel Info 窗口；Bayer mesh 和 Bayer pattern 默认关闭。Pixel Info 仅包含三个选项：
 
 1. `像素值标注`：RAW 自动显示原始值，普通 RGB 图自动显示 `R,G,B`；
 2. `Bayer mesh`：根据 Bayer pattern 添加半透明 R、Gr、Gb、B 遮罩，Gr/Gb 使用不同绿色；
-3. `Bayer pattern`：在每个像素右下角显示 `R/Gr/Gb/B`。
+3. `Bayer pattern`：在每个像素右下角显示 `R/Gr/Gb/B`；四种通道使用不同字体颜色，Gr/Gb 分别使用亮绿和青绿色系。
 
-单个源像素显示高度达到 40 px 后出现叠加层。数值位于像素中央，字高约为像素高度的 1/6；Pattern 位于右下角，字高约为 1/7。数值根据当前显示灰度自动选择黑字或白字。达到阈值后所有可见像素都会标注，并随拖拽和缩放逐帧移动。
+单个源像素显示高度达到 40 px 后自动出现叠加层。数值位于像素中央，字高约为像素高度的 1/6；Pattern 位于右下角，字高约为 1/7。数值根据当前显示灰度自动选择黑字或白字，Pattern 颜色也会按背景明暗选择深色或亮色变体。达到阈值后所有可见像素都会标注，并随拖拽和缩放逐帧移动。程序只缓存当前可见区域附近的标签数据，不会为整幅 RAW 建立副本。
 
 ## 6. Bayer Extract
 
@@ -106,12 +110,43 @@ Bayer Extract 从当前文档的原始全图中周期性提取指定 pattern 位
 - `Status`：矩形区域 count/min/max/mean/population std 和直方图；
 - `Horizontal Box`：矩形区域按水平方向生成平均 profile；
 - `Vertical Box`：矩形区域按垂直方向生成平均 profile；
-- `Line`：两次点击确定线段并生成沿线 profile；
+- `Line`：拖拽确定线段并生成沿线 profile；
 - `WB`：当前版本仅预留入口。
 
-矩形和线段均使用两次左键完成。统计可以选择 All/R/Gr/Gb/B，后台流式读取原始 Bayer 数据，支持进度、取消和过期任务丢弃，不复制完整 RAW。
+矩形和线段均使用左键按下、拖拽、松开完成。统计对象是当前显示的 RAW 管线结果：例如先执行 Bayer Extract，再打开 Pixel Statistics，会统计提取后的坐标和值，不会自动恢复原图。后台流式读取只读像素源，支持进度、取消和过期任务丢弃，不复制完整 RAW。
 
-## 8. 已知限制
+`Bayer channels` 默认关闭，此时显示一个 All 结果。规则 Bayer 排列下可勾选该项，底部会切换为 R/Gr/Gb/B 四个独立结果面板；四通道计算只扫描 ROI 一次。非恒等 Bayer Extract 会改变排列，此时该选项不可用，避免按重新排列后的坐标错误推断 Bayer 通道。
+
+图表参数位于主菜单 `偏好 → Pixel Statistics…`，包括 Line width、Histogram bins、Data points、Grid 和 Histogram fill。默认线宽为 1 px，设置会在下次启动时保留。
+
+## 8. Filter
+
+从 Tool 菜单或右侧工具区打开 Filter。子窗口提供：
+
+- `Gaussian`：高斯平滑，可设置 0.10～10.0 的 Sigma；
+- `Median`：精确中值滤波，适合脉冲噪声；
+- `Mean`：均值平滑；
+- Kernel：3×3、5×5 或 7×7。
+
+Apply 的输入是中央 RAW 区域当时正在显示的图像，而不是固定原图。例如 Bayer Extract 后再 Apply，会滤波提取结果；再次 Apply 会继续处理上一次 Filter 输出。切换回 Bayer Extract 的 Original 可重新从原图开始。所有输入保持只读。
+
+Filter 只立即生成最长边 1024 的显示预览；准确像素在 Pixel Info、放大标注或 Pixel Statistics 读取时按 64×64 瓦片计算并有界缓存，不会创建完整 W×H 滤波副本。Mean/Gaussian 使用可分离卷积，Median 使用滑动窗口。边缘像素按 clamp-to-edge 处理。
+
+## 9. Demosaic
+
+Demosaic 只在当前显示源具有规则 RGGB、BGGR、GRBG 或 GBRG 排列时可用。Filter 会保留 Bayer 排列，因此可以先降噪再 Demosaic；重新排列像素的非恒等 Bayer Extract 不再是规则 CFA，Demosaic 会禁用。
+
+三种方法：
+
+- `Malvar-He-Cutler`：默认推荐，固定 5×5 线性颜色修正，质量和 CPU 成本平衡；
+- `Hamilton-Adams`：根据水平/垂直梯度选择插值方向，适合明显边缘；
+- `Bilinear`：最快的基础插值，适合快速预览和对照。
+
+Apply 使用当时的 Display BLV、Display WLV 和 Gamma 将插值值映射为 RGB。输出只生成最长边 1024 的立即预览，准确 RGB 像素按 64×64 瓦片惰性生成。Demosaic 后 Filter、Pixel Statistics 和再次 Demosaic 会禁用；点击 `Show Bayer Source` 可恢复本次输入并选择另一算法。
+
+当前 Demosaic 只完成 CFA 颜色插值，不包含白平衡、相机颜色矩阵、色域转换、降噪、锐化或完整 tone mapping，因此不等同于相机 JPEG 成片。
+
+## 10. 已知限制
 
 - Preview 便携包未签名，也未提供安装器；
 - 尚未在独立干净 Windows 虚拟机完成正式验收；
@@ -119,8 +154,10 @@ Bayer Extract 从当前文档的原始全图中周期性提取指定 pattern 位
 - 200 MP / 400 MB 正式性能目标、GPU 瓦片渲染和双图对比仍在后续计划；
 - WB 统计尚未实施；
 - Pixel Info 在 40 px/像素以上标注全部可见像素，极大窗口下的性能仍取决于 CPU 与显卡驱动。
+- 当前 Filter 只支持标量 RAW 管线，不处理 JPG/PNG/BMP RGB 图像；kernel 最大为 7×7，尚未使用 GPU。
+- Demosaic 仅支持四种规则 2×2 Bayer CFA；Quad Bayer、Hex、自定义重排和 RGB 输入不适用，当前输出为显示映射后的 8-bit RGB。
 
-## 9. 故障排查
+## 11. 故障排查
 
 - RAW 画面错行：检查 Width、Height、Skip、Scalar type、Byte order 和 Row stride；
 - RAW 无法打开：确认 `skip + stride × height` 不超过文件大小；

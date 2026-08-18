@@ -65,6 +65,8 @@ class PixelStatisticsService {
 public:
     PixelStatisticsResult execute(
         const PixelStatisticsRequest& request) const;
+    std::vector<PixelStatisticsResult> executeChannels(
+        const PixelStatisticsRequest& request) const;
 };
 
 } // namespace rawviewer::application

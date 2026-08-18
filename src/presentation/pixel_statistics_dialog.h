@@ -4,15 +4,17 @@
 
 #include <QDialog>
 
+#include <array>
 #include <memory>
+#include <vector>
 
 class QButtonGroup;
 class QCheckBox;
 class QCloseEvent;
-class QComboBox;
 class QLabel;
 class QProgressBar;
 class QPushButton;
+class QStackedWidget;
 class QTimer;
 
 namespace rawviewer::presentation {
@@ -27,12 +29,15 @@ public:
 
     void setSource(const application::ImageMetadata* metadata);
     application::PixelStatisticsMode mode() const noexcept;
-    domain::BayerChannel channel() const noexcept;
+    bool channelsEnabled() const noexcept;
     std::uint32_t histogramBins() const noexcept;
+    void showPreferences();
     void setSelection(const application::StatisticsSelection& selection);
     void setBusy(bool busy,
                  std::shared_ptr<std::atomic_uint32_t> progress = {});
     void setResult(const application::PixelStatisticsResult& result);
+    void setResults(
+        const std::vector<application::PixelStatisticsResult>& results);
     void clearResult(const QString& message = {});
 
 protected:
@@ -48,26 +53,34 @@ signals:
 private:
     void selectMode(application::PixelStatisticsMode mode);
     void refreshProgress();
-    void updateInstructions();
+    void loadPreferences();
+    void applyChartPreferences();
+    void setMetricLabels(const application::StatisticsSummary* summary);
 
     QButtonGroup* modeGroup_ = nullptr;
-    QComboBox* channelCombo_ = nullptr;
-    QComboBox* binsCombo_ = nullptr;
-    QCheckBox* gridCheck_ = nullptr;
-    QCheckBox* pointsCheck_ = nullptr;
-    QCheckBox* fillCheck_ = nullptr;
-    QComboBox* lineWidthCombo_ = nullptr;
-    QLabel* instructionLabel_ = nullptr;
+    QCheckBox* channelsCheck_ = nullptr;
     QLabel* selectionLabel_ = nullptr;
     QLabel* summaryLabel_ = nullptr;
+    std::array<QLabel*, 5> metricLabels_{};
     QProgressBar* progressBar_ = nullptr;
     QPushButton* cancelButton_ = nullptr;
     StatisticsChartWidget* chart_ = nullptr;
+    QStackedWidget* resultStack_ = nullptr;
+    QWidget* singleResultPage_ = nullptr;
+    QWidget* channelResultPage_ = nullptr;
+    std::array<StatisticsChartWidget*, 4> channelCharts_{};
+    std::array<QLabel*, 4> channelSummaryLabels_{};
     QTimer* progressTimer_ = nullptr;
     std::shared_ptr<std::atomic_uint32_t> progress_;
     application::PixelStatisticsMode mode_ =
         application::PixelStatisticsMode::Status;
     bool sourceSupported_ = false;
+    bool channelSupported_ = false;
+    std::uint32_t histogramBins_ = 256;
+    int lineWidth_ = 1;
+    bool showGrid_ = true;
+    bool showPoints_ = false;
+    bool fillHistogram_ = true;
 };
 
 } // namespace rawviewer::presentation

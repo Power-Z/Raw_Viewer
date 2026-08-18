@@ -4,6 +4,32 @@
 
 ## [Unreleased]
 
+## [0.3.0-preview.3] - 2026-08-19
+
+### Added
+
+- V0.7.7 增加 Filter 工具及紧凑技术子窗口，支持 3×3/5×5/7×7 Mean、Gaussian（可调 sigma）和 Median 滤波。
+- V0.7.8 增加 Bayer Demosaic 工具和专业紧凑子窗口，提供 Bilinear、Malvar-He-Cutler、Hamilton-Adams 三种算法及 Demosaic 输入恢复。
+
+### Changed
+
+- V0.7.2 在主窗口初始化时启用 Pixel Info 默认选项，首次放大到 40 px/像素即可显示数值和 Bayer pattern，无需先打开工具窗口。
+- Bayer pattern 字体改为 R/Gr/Gb/B 四通道独立颜色，并为明暗背景提供不同色阶，Gr/Gb 可明确区分。
+- 像素标注增加有界可见区域缓存和 `QStaticText` 布局复用；连续平移、缩放与重绘不再重复读取和格式化已缓存像素。
+- V0.7.3 Pixel Statistics 改为统计当前显示 RAW 管线结果；Bayer Extract 后打开统计不再恢复原图，无规则 Bayer 排列仍可执行 All 统计。
+- 统计区域交互改为左键按下、拖拽、松开完成，矩形和 Line 均在 release 时发布一次选择。
+- Pixel Statistics 窗口改为 740 px 窄幅 MODE/ANALYSIS/PLOT 直角技术面板，使用紧凑控制行和 COUNT/MEAN/MIN/MAX/STD 指标网格。
+- V0.7.4 将 Pixel Statistics 的 Channel 下拉框改为 `Bayer channels` 复选项；开启后底部以 2×2 面板同时显示 R/Gr/Gb/B 四组统计和图表。
+- 四通道统计改为单遍扫描并按 Bayer 坐标分流，避免对超大 RAW 重复读取四次。
+- Line width、Histogram bins、Data points、Grid 和 Histogram fill 移入 `偏好 → Pixel Statistics…` 并持久化，默认线宽改为 1 px。
+- V0.7.6 RAW 视口增加工具模式下可用的中键平移、上下像素标尺、右上角半透明全图导航、底部/右侧同步滚动条；Pixel Info 默认关闭 Bayer pattern，仅默认显示像素值。
+- Filter 每次处理当前显示 RAW，可在 Bayer Extract 或前一次滤波结果上继续处理；采用 1024 有界预览、64×64 halo 瓦片、约 12 MiB LRU、Mean/Gaussian 可分离卷积和 Median 滑动窗口，避免完整输出副本。
+- Demosaic 处理当前显示的规则 Bayer RAW，采用 1024 RGB 预览、64×64 惰性准确 RGB 瓦片和约 5 MiB LRU；输出标记为 display-ready，避免再次套用 RAW 显示范围。
+
+### Fixed
+
+- V0.7.5 修复 Bayer Extract 后像素标注丢失原始 R/Gr/Gb/B 通道的问题；紧凑输出现在按输出坐标溯源到原图通道，像素数值继续读取当前显示的提取结果。排查确认连续 Extract 始终从 original 开始，不存在链式重复提取。
+
 ## [0.3.0-preview.2] - 2026-08-18
 
 ### Added

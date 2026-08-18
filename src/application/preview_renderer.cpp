@@ -24,6 +24,10 @@ std::shared_ptr<DecodedImage> PreviewRenderer::render(
         return {};
     }
 
+    if (original->displayReadyRgb) {
+        return std::make_shared<DecodedImage>(*original);
+    }
+
     auto rendered = std::make_shared<DecodedImage>(*original);
     if (original->signalPreview &&
         original->signalPreview->values.size() ==

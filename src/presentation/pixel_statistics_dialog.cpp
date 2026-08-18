@@ -5,7 +5,8 @@
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QCloseEvent>
-#include <QComboBox>
+#include <QDialogButtonBox>
+#include <QFormLayout>
 #include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -13,10 +14,15 @@
 #include <QLocale>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QSettings>
+#include <QSignalBlocker>
+#include <QSpinBox>
+#include <QStackedWidget>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <array>
 
 namespace rawviewer::presentation {
@@ -39,6 +45,19 @@ QString number(double value) {
     return QLocale().toString(value, 'f', 4);
 }
 
+QString channelName(domain::BayerChannel channel) {
+    return QString::fromLatin1(domain::toString(channel));
+}
+
+QString compactSummary(const application::StatisticsSummary& value) {
+    return QObject::tr("N %1   μ %2   min %3   max %4   σ %5")
+        .arg(QLocale().toString(static_cast<qulonglong>(value.count)))
+        .arg(number(value.mean))
+        .arg(number(value.minimum))
+        .arg(number(value.maximum))
+        .arg(number(value.standardDeviation));
+}
+
 } // namespace
 
 PixelStatisticsDialog::PixelStatisticsDialog(QWidget* parent)
@@ -46,33 +65,47 @@ PixelStatisticsDialog::PixelStatisticsDialog(QWidget* parent)
     setWindowTitle(tr("Pixel Statistics"));
     setModal(false);
     setAttribute(Qt::WA_DeleteOnClose, false);
-    resize(1120, 780);
-    setMinimumSize(860, 620);
+    resize(740, 620);
+    setMinimumSize(640, 500);
     setObjectName(QStringLiteral("pixelStatisticsDialog"));
     setStyleSheet(QStringLiteral(
-        "#pixelStatisticsDialog QFrame[panel=\"true\"] {"
-        " border: 1px solid palette(mid); border-radius: 10px;"
-        " background: palette(base); }"
-        "#pixelStatisticsDialog QToolButton { padding: 8px 16px;"
-        " border-radius: 7px; font-weight: 600; }"
+        "#pixelStatisticsDialog QFrame[statsPane=\"true\"] {"
+        " border: 1px solid palette(mid); background: palette(base); }"
+        "#pixelStatisticsDialog QLabel[role=\"section\"] {"
+        " color: palette(mid); font-size: 10px; font-weight: 700;"
+        " letter-spacing: 1px; }"
+        "#pixelStatisticsDialog QToolButton[modeButton=\"true\"] {"
+        " border: 0; border-bottom: 2px solid transparent;"
+        " padding: 4px 9px; min-height: 22px; font-weight: 600; }"
         "#pixelStatisticsDialog QToolButton:checked {"
-        " background: palette(highlight); color: palette(highlighted-text); }"
-        "#pixelStatisticsDialog QLabel[role=\"metric\"] {"
-        " font-size: 15px; font-weight: 600; }"));
+        " border-bottom-color: palette(highlight);"
+        " background: palette(alternate-base); color: palette(text); }"
+        "#pixelStatisticsDialog QFrame[metricCell=\"true\"] {"
+        " border-left: 1px solid palette(mid); }"
+        "#pixelStatisticsDialog QFrame[channelCard=\"true\"] {"
+        " border: 1px solid palette(mid); background: palette(base); }"
+        "#pixelStatisticsDialog QLabel[role=\"channelTitle\"] {"
+        " font-weight: 700; }"
+        "#pixelStatisticsDialog QLabel[role=\"channelSummary\"] {"
+        " color: palette(mid); font-size: 10px; }"
+        "#pixelStatisticsDialog QLabel[role=\"metricCaption\"] {"
+        " color: palette(mid); font-size: 10px; }"
+        "#pixelStatisticsDialog QLabel[role=\"metricValue\"] {"
+        " font-family: monospace; font-size: 14px; font-weight: 600; }"));
 
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(14, 14, 14, 14);
-    root->setSpacing(10);
+    root->setContentsMargins(8, 8, 8, 8);
+    root->setSpacing(6);
 
     auto* top = new QFrame(this);
-    top->setProperty("panel", true);
+    top->setObjectName(QStringLiteral("statisticsModePane"));
+    top->setProperty("statsPane", true);
     auto* topLayout = new QHBoxLayout(top);
-    auto* title = new QLabel(tr("PIXEL STATISTICS"), top);
-    QFont titleFont = title->font();
-    titleFont.setBold(true);
-    titleFont.setLetterSpacing(QFont::AbsoluteSpacing, 1.4);
-    title->setFont(titleFont);
-    topLayout->addWidget(title);
+    topLayout->setContentsMargins(8, 4, 6, 4);
+    topLayout->setSpacing(2);
+    auto* modeTitle = new QLabel(tr("MODE"), top);
+    modeTitle->setProperty("role", "section");
+    topLayout->addWidget(modeTitle);
     modeGroup_ = new QButtonGroup(this);
     modeGroup_->setExclusive(true);
     const std::array modes{
@@ -86,6 +119,7 @@ PixelStatisticsDialog::PixelStatisticsDialog(QWidget* parent)
         auto* button = new QToolButton(top);
         button->setText(modeName(mode));
         button->setCheckable(true);
+        button->setProperty("modeButton", true);
         button->setProperty("mode", static_cast<int>(mode));
         modeGroup_->addButton(button, static_cast<int>(mode));
         topLayout->addWidget(button);
@@ -95,76 +129,121 @@ PixelStatisticsDialog::PixelStatisticsDialog(QWidget* parent)
     auto* close = new QToolButton(top);
     close->setText(QStringLiteral("×"));
     close->setToolTip(tr("关闭"));
+    close->setAutoRaise(true);
+    close->setFixedSize(22, 22);
     topLayout->addWidget(close);
     root->addWidget(top, 1);
 
     auto* controls = new QFrame(this);
-    controls->setProperty("panel", true);
+    controls->setObjectName(QStringLiteral("statisticsAnalysisPane"));
+    controls->setProperty("statsPane", true);
     auto* controlLayout = new QGridLayout(controls);
-    controlLayout->setContentsMargins(16, 12, 16, 12);
-    instructionLabel_ = new QLabel(controls);
-    instructionLabel_->setWordWrap(true);
-    instructionLabel_->setProperty("role", "metric");
-    controlLayout->addWidget(instructionLabel_, 0, 0, 1, 6);
+    controlLayout->setContentsMargins(8, 6, 8, 6);
+    controlLayout->setHorizontalSpacing(7);
+    controlLayout->setVerticalSpacing(4);
+    auto* analysisTitle = new QLabel(tr("ANALYSIS"), controls);
+    analysisTitle->setProperty("role", "section");
+    controlLayout->addWidget(analysisTitle, 0, 0, 1, 8);
 
-    channelCombo_ = new QComboBox(controls);
-    channelCombo_->addItem(tr("All Bayer samples"),
-                           static_cast<int>(domain::BayerChannel::None));
-    channelCombo_->addItem(QStringLiteral("R"),
-                           static_cast<int>(domain::BayerChannel::R));
-    channelCombo_->addItem(QStringLiteral("Gr"),
-                           static_cast<int>(domain::BayerChannel::Gr));
-    channelCombo_->addItem(QStringLiteral("Gb"),
-                           static_cast<int>(domain::BayerChannel::Gb));
-    channelCombo_->addItem(QStringLiteral("B"),
-                           static_cast<int>(domain::BayerChannel::B));
-    binsCombo_ = new QComboBox(controls);
-    for (const int bins : {64, 128, 256, 512, 1024}) {
-        binsCombo_->addItem(QString::number(bins), bins);
-    }
-    binsCombo_->setCurrentText(QStringLiteral("256"));
-    gridCheck_ = new QCheckBox(tr("Grid"), controls);
-    gridCheck_->setChecked(true);
-    pointsCheck_ = new QCheckBox(tr("Data points"), controls);
-    fillCheck_ = new QCheckBox(tr("Histogram fill"), controls);
-    fillCheck_->setChecked(true);
-    lineWidthCombo_ = new QComboBox(controls);
-    lineWidthCombo_->addItems({"1 px", "2 px", "3 px", "4 px"});
-    lineWidthCombo_->setCurrentIndex(1);
-    controlLayout->addWidget(new QLabel(tr("Channel"), controls), 1, 0);
-    controlLayout->addWidget(channelCombo_, 1, 1);
-    controlLayout->addWidget(new QLabel(tr("Histogram bins"), controls), 1, 2);
-    controlLayout->addWidget(binsCombo_, 1, 3);
-    controlLayout->addWidget(new QLabel(tr("Line width"), controls), 1, 4);
-    controlLayout->addWidget(lineWidthCombo_, 1, 5);
-    controlLayout->addWidget(gridCheck_, 2, 0);
-    controlLayout->addWidget(pointsCheck_, 2, 1);
-    controlLayout->addWidget(fillCheck_, 2, 2);
-
+    channelsCheck_ = new QCheckBox(tr("Bayer channels"), controls);
+    channelsCheck_->setObjectName(QStringLiteral("statisticsChannelsCheck"));
+    channelsCheck_->setToolTip(
+        tr("Show separate R, Gr, Gb and B results"));
+    controlLayout->addWidget(channelsCheck_, 1, 0, 1, 2);
     selectionLabel_ = new QLabel(tr("Selection —"), controls);
-    summaryLabel_ = new QLabel(tr("等待选择区域"), controls);
-    summaryLabel_->setTextFormat(Qt::RichText);
+    selectionLabel_->setObjectName(QStringLiteral("statisticsSelectionLabel"));
+    controlLayout->addWidget(selectionLabel_, 1, 2, 1, 6);
+
+    auto* metrics = new QFrame(controls);
+    metrics->setObjectName(QStringLiteral("statisticsMetrics"));
+    auto* metricsLayout = new QHBoxLayout(metrics);
+    metricsLayout->setContentsMargins(0, 0, 0, 0);
+    metricsLayout->setSpacing(0);
+    const std::array metricNames{tr("COUNT"), tr("MEAN"), tr("MIN"),
+                                 tr("MAX"), tr("STD")};
+    for (std::size_t index = 0; index < metricNames.size(); ++index) {
+        auto* cell = new QFrame(metrics);
+        cell->setProperty("metricCell", index != 0);
+        auto* cellLayout = new QVBoxLayout(cell);
+        cellLayout->setContentsMargins(8, 2, 8, 3);
+        cellLayout->setSpacing(0);
+        auto* caption = new QLabel(metricNames[index], cell);
+        caption->setProperty("role", "metricCaption");
+        metricLabels_[index] = new QLabel(QStringLiteral("—"), cell);
+        metricLabels_[index]->setProperty("role", "metricValue");
+        cellLayout->addWidget(caption);
+        cellLayout->addWidget(metricLabels_[index]);
+        metricsLayout->addWidget(cell, 1);
+    }
+    controlLayout->addWidget(metrics, 2, 0, 1, 8);
+
+    summaryLabel_ = new QLabel(tr("Drag on the displayed RAW"), controls);
+    summaryLabel_->setObjectName(QStringLiteral("statisticsStateLabel"));
     summaryLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    summaryLabel_->setProperty("role", "metric");
-    controlLayout->addWidget(selectionLabel_, 3, 0, 1, 2);
-    controlLayout->addWidget(summaryLabel_, 3, 2, 1, 4);
+    controlLayout->addWidget(summaryLabel_, 3, 0, 1, 8);
     progressBar_ = new QProgressBar(controls);
     progressBar_->setRange(0, 1000);
     progressBar_->setValue(0);
     progressBar_->setFormat(tr("Ready"));
     cancelButton_ = new QPushButton(tr("Cancel"), controls);
     cancelButton_->setEnabled(false);
-    controlLayout->addWidget(progressBar_, 4, 0, 1, 5);
-    controlLayout->addWidget(cancelButton_, 4, 5);
+    controlLayout->addWidget(progressBar_, 4, 0, 1, 7);
+    controlLayout->addWidget(cancelButton_, 4, 7);
     root->addWidget(controls, 2);
 
     auto* bottom = new QFrame(this);
-    bottom->setProperty("panel", true);
+    bottom->setObjectName(QStringLiteral("statisticsPlotPane"));
+    bottom->setProperty("statsPane", true);
     auto* bottomLayout = new QVBoxLayout(bottom);
-    chart_ = new StatisticsChartWidget(bottom);
-    bottomLayout->addWidget(chart_);
+    bottomLayout->setContentsMargins(8, 6, 8, 8);
+    bottomLayout->setSpacing(3);
+    auto* plotTitle = new QLabel(tr("PLOT"), bottom);
+    plotTitle->setProperty("role", "section");
+    bottomLayout->addWidget(plotTitle);
+    resultStack_ = new QStackedWidget(bottom);
+    resultStack_->setObjectName(QStringLiteral("statisticsResultStack"));
+    singleResultPage_ = new QWidget(resultStack_);
+    auto* singleLayout = new QVBoxLayout(singleResultPage_);
+    singleLayout->setContentsMargins(0, 0, 0, 0);
+    chart_ = new StatisticsChartWidget(singleResultPage_);
+    singleLayout->addWidget(chart_);
+    resultStack_->addWidget(singleResultPage_);
+
+    channelResultPage_ = new QWidget(resultStack_);
+    channelResultPage_->setObjectName(QStringLiteral("statisticsChannelResults"));
+    auto* channelGrid = new QGridLayout(channelResultPage_);
+    channelGrid->setContentsMargins(0, 0, 0, 0);
+    channelGrid->setSpacing(4);
+    const std::array channels{domain::BayerChannel::R,
+                              domain::BayerChannel::Gr,
+                              domain::BayerChannel::Gb,
+                              domain::BayerChannel::B};
+    for (std::size_t index = 0; index < channels.size(); ++index) {
+        auto* card = new QFrame(channelResultPage_);
+        card->setObjectName(QStringLiteral("statisticsChannelCard%1")
+                                .arg(channelName(channels[index])));
+        card->setProperty("channelCard", true);
+        auto* cardLayout = new QVBoxLayout(card);
+        cardLayout->setContentsMargins(4, 3, 4, 4);
+        cardLayout->setSpacing(1);
+        auto* title = new QLabel(channelName(channels[index]), card);
+        title->setProperty("role", "channelTitle");
+        channelSummaryLabels_[index] = new QLabel(QStringLiteral("—"), card);
+        channelSummaryLabels_[index]->setProperty("role", "channelSummary");
+        channelCharts_[index] = new StatisticsChartWidget(card);
+        cardLayout->addWidget(title);
+        cardLayout->addWidget(channelSummaryLabels_[index]);
+        cardLayout->addWidget(channelCharts_[index], 1);
+        channelGrid->addWidget(card,
+                               static_cast<int>(index / 2),
+                               static_cast<int>(index % 2));
+    }
+    resultStack_->addWidget(channelResultPage_);
+    bottomLayout->addWidget(resultStack_);
     root->addWidget(bottom, 5);
 
+    loadPreferences();
+    applyChartPreferences();
     progressTimer_ = new QTimer(this);
     progressTimer_->setInterval(80);
     connect(progressTimer_, &QTimer::timeout,
@@ -172,54 +251,110 @@ PixelStatisticsDialog::PixelStatisticsDialog(QWidget* parent)
     connect(modeGroup_, &QButtonGroup::idClicked, this, [this](int id) {
         selectMode(static_cast<application::PixelStatisticsMode>(id));
     });
-    connect(channelCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
+    connect(channelsCheck_, &QCheckBox::toggled,
             this, &PixelStatisticsDialog::optionsChanged);
-    connect(binsCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
-            this, &PixelStatisticsDialog::optionsChanged);
-    connect(gridCheck_, &QCheckBox::toggled,
-            chart_, &StatisticsChartWidget::setShowGrid);
-    connect(pointsCheck_, &QCheckBox::toggled,
-            chart_, &StatisticsChartWidget::setShowPoints);
-    connect(fillCheck_, &QCheckBox::toggled,
-            chart_, &StatisticsChartWidget::setFillHistogram);
-    connect(lineWidthCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
-            this, [this](int index) { chart_->setLineWidth(index + 1); });
     connect(cancelButton_, &QPushButton::clicked,
             this, &PixelStatisticsDialog::cancelRequested);
     connect(close, &QToolButton::clicked, this, [this] {
         emit toolClosed();
         hide();
     });
-    updateInstructions();
 }
 
 void PixelStatisticsDialog::setSource(
     const application::ImageMetadata* metadata) {
-    sourceSupported_ = metadata && metadata->kind != application::ImageKind::Standard &&
+    sourceSupported_ = metadata &&
+        metadata->kind != application::ImageKind::Standard;
+    channelSupported_ = sourceSupported_ &&
         metadata->bayerPattern != domain::BayerPattern::None;
-    channelCombo_->setEnabled(sourceSupported_);
-    binsCombo_->setEnabled(
-        sourceSupported_ && mode_ == application::PixelStatisticsMode::Status);
+    if (!channelSupported_) {
+        const QSignalBlocker blocker(channelsCheck_);
+        channelsCheck_->setChecked(false);
+    }
+    channelsCheck_->setEnabled(channelSupported_);
     for (auto* button : modeGroup_->buttons()) {
         button->setEnabled(sourceSupported_);
     }
     clearResult(sourceSupported_
-        ? tr("选择统计模式，然后在原始 Bayer RAW 上选择区域。")
-        : tr("Pixel Statistics 仅支持原始 Bayer RAW。"));
+        ? tr("Drag on the displayed RAW")
+        : tr("RAW source required"));
     selectionLabel_->setText(tr("Selection —"));
-    updateInstructions();
 }
 
 application::PixelStatisticsMode PixelStatisticsDialog::mode() const noexcept {
     return mode_;
 }
 
-domain::BayerChannel PixelStatisticsDialog::channel() const noexcept {
-    return static_cast<domain::BayerChannel>(channelCombo_->currentData().toInt());
+bool PixelStatisticsDialog::channelsEnabled() const noexcept {
+    return channelSupported_ && channelsCheck_->isChecked();
 }
 
 std::uint32_t PixelStatisticsDialog::histogramBins() const noexcept {
-    return static_cast<std::uint32_t>(binsCombo_->currentData().toUInt());
+    return histogramBins_;
+}
+
+void PixelStatisticsDialog::showPreferences() {
+    QDialog dialog(this);
+    dialog.setObjectName(QStringLiteral("pixelStatisticsPreferencesDialog"));
+    dialog.setWindowTitle(tr("Pixel Statistics Preferences"));
+    dialog.setModal(true);
+    dialog.setMinimumWidth(330);
+    auto* layout = new QFormLayout(&dialog);
+    layout->setContentsMargins(12, 12, 12, 12);
+    layout->setSpacing(8);
+
+    auto* lineWidth = new QSpinBox(&dialog);
+    lineWidth->setObjectName(QStringLiteral("statisticsPreferenceLineWidth"));
+    lineWidth->setRange(1, 5);
+    lineWidth->setSuffix(tr(" px"));
+    lineWidth->setValue(lineWidth_);
+    auto* bins = new QSpinBox(&dialog);
+    bins->setObjectName(QStringLiteral("statisticsPreferenceHistogramBins"));
+    bins->setRange(16, 4096);
+    bins->setSingleStep(16);
+    bins->setValue(static_cast<int>(histogramBins_));
+    auto* dataPoints = new QCheckBox(tr("Show data points"), &dialog);
+    dataPoints->setObjectName(QStringLiteral("statisticsPreferenceDataPoints"));
+    dataPoints->setChecked(showPoints_);
+    auto* grid = new QCheckBox(tr("Show grid"), &dialog);
+    grid->setObjectName(QStringLiteral("statisticsPreferenceGrid"));
+    grid->setChecked(showGrid_);
+    auto* fill = new QCheckBox(tr("Fill histogram"), &dialog);
+    fill->setObjectName(QStringLiteral("statisticsPreferenceHistogramFill"));
+    fill->setChecked(fillHistogram_);
+    layout->addRow(tr("Line width"), lineWidth);
+    layout->addRow(tr("Histogram bins"), bins);
+    layout->addRow(QString(), dataPoints);
+    layout->addRow(QString(), grid);
+    layout->addRow(QString(), fill);
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addRow(buttons);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    const auto oldBins = histogramBins_;
+    lineWidth_ = lineWidth->value();
+    histogramBins_ = static_cast<std::uint32_t>(bins->value());
+    showPoints_ = dataPoints->isChecked();
+    showGrid_ = grid->isChecked();
+    fillHistogram_ = fill->isChecked();
+    QSettings settings;
+    settings.setValue(QStringLiteral("pixelStatistics/lineWidth"), lineWidth_);
+    settings.setValue(QStringLiteral("pixelStatistics/histogramBins"),
+                      histogramBins_);
+    settings.setValue(QStringLiteral("pixelStatistics/showDataPoints"),
+                      showPoints_);
+    settings.setValue(QStringLiteral("pixelStatistics/showGrid"), showGrid_);
+    settings.setValue(QStringLiteral("pixelStatistics/fillHistogram"),
+                      fillHistogram_);
+    applyChartPreferences();
+    if (oldBins != histogramBins_) {
+        emit optionsChanged();
+    }
 }
 
 void PixelStatisticsDialog::setSelection(
@@ -237,15 +372,12 @@ void PixelStatisticsDialog::setBusy(
     std::shared_ptr<std::atomic_uint32_t> progress) {
     progress_ = std::move(progress);
     cancelButton_->setEnabled(busy);
-    channelCombo_->setEnabled(sourceSupported_ && !busy);
-    binsCombo_->setEnabled(
-        sourceSupported_ && !busy &&
-        mode_ == application::PixelStatisticsMode::Status);
+    channelsCheck_->setEnabled(channelSupported_ && !busy);
     if (busy) {
         progressBar_->setValue(0);
         progressBar_->setFormat(tr("Calculating %p%"));
         progressTimer_->start();
-        summaryLabel_->setText(tr("正在扫描原始像素…"));
+        summaryLabel_->setText(tr("Calculating displayed RAW…"));
     } else {
         progressTimer_->stop();
         progress_.reset();
@@ -254,41 +386,63 @@ void PixelStatisticsDialog::setBusy(
 
 void PixelStatisticsDialog::setResult(
     const application::PixelStatisticsResult& result) {
+    setResults({result});
+}
+
+void PixelStatisticsDialog::setResults(
+    const std::vector<application::PixelStatisticsResult>& results) {
+    if (results.empty()) {
+        clearResult(tr("No results"));
+        return;
+    }
     setBusy(false);
-    const auto& value = result.summary;
-    summaryLabel_->setText(
-        tr("<b>Count</b> %1 &nbsp;&nbsp; <b>Mean</b> %2 &nbsp;&nbsp; "
-           "<b>Min</b> %3 &nbsp;&nbsp; <b>Max</b> %4 &nbsp;&nbsp; "
-           "<b>Std</b> %5")
-            .arg(QLocale().toString(static_cast<qulonglong>(value.count)))
-            .arg(number(value.mean))
-            .arg(number(value.minimum))
-            .arg(number(value.maximum))
-            .arg(number(value.standardDeviation)));
+    if (results.size() == channelCharts_.size()) {
+        setMetricLabels(nullptr);
+        summaryLabel_->setText(tr("Complete · 4 Bayer channels"));
+        for (std::size_t index = 0; index < channelCharts_.size(); ++index) {
+            if (results[index].succeeded()) {
+                channelSummaryLabels_[index]->setText(
+                    compactSummary(results[index].summary));
+                channelCharts_[index]->setResult(results[index]);
+            } else {
+                const auto message = QString::fromStdString(
+                    results[index].message);
+                channelSummaryLabels_[index]->setText(tr("No samples"));
+                channelCharts_[index]->clear(message);
+            }
+        }
+        resultStack_->setCurrentWidget(channelResultPage_);
+    } else {
+        setMetricLabels(&results.front().summary);
+        summaryLabel_->setText(tr("Complete"));
+        chart_->setResult(results.front());
+        resultStack_->setCurrentWidget(singleResultPage_);
+    }
     progressBar_->setValue(1000);
     progressBar_->setFormat(tr("Complete"));
-    chart_->setResult(result);
 }
 
 void PixelStatisticsDialog::clearResult(const QString& message) {
     setBusy(false);
-    summaryLabel_->setText(message.isEmpty() ? tr("等待选择区域") : message);
+    setMetricLabels(nullptr);
+    summaryLabel_->setText(
+        message.isEmpty() ? tr("Drag on the displayed RAW") : message);
     progressBar_->setValue(0);
     progressBar_->setFormat(tr("Ready"));
     chart_->clear(message);
+    for (std::size_t index = 0; index < channelCharts_.size(); ++index) {
+        channelSummaryLabels_[index]->setText(QStringLiteral("—"));
+        channelCharts_[index]->clear(message);
+    }
+    resultStack_->setCurrentWidget(singleResultPage_);
 }
 
 void PixelStatisticsDialog::selectMode(
     application::PixelStatisticsMode mode) {
     mode_ = mode;
-    binsCombo_->setEnabled(sourceSupported_ &&
-        mode == application::PixelStatisticsMode::Status);
-    fillCheck_->setEnabled(mode == application::PixelStatisticsMode::Status);
-    pointsCheck_->setEnabled(mode != application::PixelStatisticsMode::Status);
     clearResult(mode == application::PixelStatisticsMode::WhiteBalance
-        ? tr("WB 入口已预留，本版本不执行计算。")
-        : tr("请在图像中单击起点，再次单击终点。"));
-    updateInstructions();
+        ? tr("WB reserved")
+        : tr("Drag on the displayed RAW"));
     emit modeChanged(mode_);
 }
 
@@ -300,32 +454,52 @@ void PixelStatisticsDialog::refreshProgress() {
         progress_->load(std::memory_order_relaxed)));
 }
 
-void PixelStatisticsDialog::updateInstructions() {
-    if (!sourceSupported_) {
-        instructionLabel_->setText(tr("打开带 Bayer pattern 的 RAW 后可用。"));
+void PixelStatisticsDialog::loadPreferences() {
+    const QSettings settings;
+    lineWidth_ = std::clamp(
+        settings.value(QStringLiteral("pixelStatistics/lineWidth"), 1).toInt(),
+        1,
+        5);
+    histogramBins_ = static_cast<std::uint32_t>(std::clamp(
+        settings.value(QStringLiteral("pixelStatistics/histogramBins"), 256)
+            .toInt(),
+        16,
+        4096));
+    showPoints_ = settings.value(
+        QStringLiteral("pixelStatistics/showDataPoints"), false).toBool();
+    showGrid_ = settings.value(
+        QStringLiteral("pixelStatistics/showGrid"), true).toBool();
+    fillHistogram_ = settings.value(
+        QStringLiteral("pixelStatistics/fillHistogram"), true).toBool();
+}
+
+void PixelStatisticsDialog::applyChartPreferences() {
+    const auto apply = [this](StatisticsChartWidget* chart) {
+        chart->setLineWidth(lineWidth_);
+        chart->setShowGrid(showGrid_);
+        chart->setShowPoints(showPoints_);
+        chart->setFillHistogram(fillHistogram_);
+    };
+    apply(chart_);
+    for (auto* channelChart : channelCharts_) {
+        apply(channelChart);
+    }
+}
+
+void PixelStatisticsDialog::setMetricLabels(
+    const application::StatisticsSummary* summary) {
+    if (!summary) {
+        for (auto* label : metricLabels_) {
+            label->setText(QStringLiteral("—"));
+        }
         return;
     }
-    switch (mode_) {
-    case application::PixelStatisticsMode::Status:
-        instructionLabel_->setText(
-            tr("STATUS · 矩形区域原始值统计与灰度直方图"));
-        break;
-    case application::PixelStatisticsMode::HorizontalBox:
-        instructionLabel_->setText(
-            tr("HORIZONTAL BOX · 每列沿 Y 方向平均，绘制水平 profile"));
-        break;
-    case application::PixelStatisticsMode::VerticalBox:
-        instructionLabel_->setText(
-            tr("VERTICAL BOX · 每行沿 X 方向平均，绘制垂直 profile"));
-        break;
-    case application::PixelStatisticsMode::Line:
-        instructionLabel_->setText(
-            tr("LINE · 沿线段最近邻采样，横轴为累计像素距离"));
-        break;
-    case application::PixelStatisticsMode::WhiteBalance:
-        instructionLabel_->setText(tr("WB · Reserved"));
-        break;
-    }
+    metricLabels_[0]->setText(
+        QLocale().toString(static_cast<qulonglong>(summary->count)));
+    metricLabels_[1]->setText(number(summary->mean));
+    metricLabels_[2]->setText(number(summary->minimum));
+    metricLabels_[3]->setText(number(summary->maximum));
+    metricLabels_[4]->setText(number(summary->standardDeviation));
 }
 
 void PixelStatisticsDialog::closeEvent(QCloseEvent* event) {
