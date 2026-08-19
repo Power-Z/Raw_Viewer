@@ -4,6 +4,31 @@
 
 ## [Unreleased]
 
+## [0.3.0-preview.4] - 2026-08-20
+
+### Changed
+
+- V0.7.9 将 RAW 视口标尺改为顶部 X 轴和左侧 Y 轴，背景、边框与刻度文字全部跟随当前 Qt 主题调色板。
+- Bayer Extract 状态栏只报告当前输出视图坐标，不再混入原图坐标；例如 200×200 图像按 2×2 左上单点提取后，输出坐标范围严格为 100×100。
+- V0.7.10 将 PNG/JPG 和 Demosaic 等 RGB 图像的像素标注改为 `R/G/B` 三行并放置在像素左下角；三个静态文本分别缓存，避免重绘时重复布局。
+- Pixel Info 子窗口改为直角双栏布局，右侧增加 4×4 RGGB 实时示例，像素值、Bayer mesh 和 Bayer pattern 三项会即时反映到预览。
+- V0.7.11 将 RGB 三行像素标注缩小为原字号的 60%，并按 R/G/B 使用高对比红、绿、蓝通道色。
+- Pixel Statistics 移除 MODE/ANALYSIS/PLOT 与重复状态行，压缩 Mode/Analysis 区域并将五项指标标题放大 40%；所有内部面板显式使用直角边框。
+- Pixel Statistics 图表在所有主题下使用纯黑细数据线和 RGB(207,207,207) 绘图区；坐标轴/边框减半，并支持靠近曲线时显示连接 X/Y 轴的悬停引导线。
+- V0.7.12 编辑菜单增加 Flip、Mirror、Rotate Left、Rotate Right、Rotate 180 及五组唯一快捷键；几何编辑使用可取消的惰性仿射像素源和最长边 1024 的有界预览。
+- 五步撤销从 Display Mapping 扩展为当前文档全局编辑历史，覆盖显示参数、几何变换、Bayer Extract/Show Original、Filter、Demosaic/Restore Source。
+- V0.7.13 将右上角预览灰度线升级为后台全分辨率直方图：规则 Bayer 显示 R/Gr/Gb/B，RGB 显示 R/G/B/Y，非规则 RAW 显示单通道，并采用 Lightroom 风格深色叠加曲线。
+- Display BLV/WLV 改为一位小数输入和直方图横轴共用双手柄；新增 BLV–WLV 放大镜，以当前显示窗口放大横轴进行精调。
+- V0.7.14 将 BLV/WLV 双手柄改为拖动时仅预览、松手后一次应用；输入框使用 120 ms 防抖。全图统计增加 Grayscale16/RGBA 连续内存快速路径和曲线投影缓存，RAW 默认 Gamma 改为线性 1.0。
+
+### Fixed
+
+- 修复大图 Bayer Extract 的 1024 信号预览在高倍率下与精确像素标注不一致的问题；视口在放大到 16 px/像素后按可见区域绘制有界精确像素缓存，最多保留 65,536 个样本。
+- 修复连续打开不同尺寸图像时旧拖拽锚点、选择和坐标状态可能进入新图的问题；非保留视图换图现在原子重置交互、缩放、偏移和坐标有效性。
+- 修复撤销只恢复 BLV/WLV/Gamma、不会恢复处理管线的问题；Undo/Redo 现在统一失效后台任务并刷新视口、直方图、坐标、工具状态、子窗口数据源及仍有效的 Pixel Statistics。
+- 修复右上角直方图只统计 8-bit 显示预览、无法区分 Bayer/RGB 通道的问题；Display Mapping 调整不再触发重复全图扫描。
+- 修复完整 Grayscale16 RAW 调整 BLV/WLV 时逐事件重建显示缓存、直方图重复聚合 65,536 bins 导致卡顿的问题；Display 控件保持可用并与双手柄同步。
+
 ## [0.3.0-preview.3] - 2026-08-19
 
 ### Added

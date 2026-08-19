@@ -1,10 +1,12 @@
 #include "presentation/bayer_extract_dialog.h"
 #include "presentation/demosaic_dialog.h"
 #include "presentation/filter_dialog.h"
+#include "presentation/histogram_widget.h"
 #include "presentation/image_viewport.h"
 #include "presentation/main_window.h"
 #include "presentation/pixel_info_dialog.h"
 #include "presentation/pixel_statistics_dialog.h"
+#include "presentation/statistics_chart_widget.h"
 
 #include "application/preview_renderer.h"
 
@@ -28,6 +30,7 @@
 #include <QSettings>
 #include <QSpinBox>
 #include <QStackedWidget>
+#include <QStringList>
 #include <QTest>
 #include <QTemporaryFile>
 #include <QToolButton>
@@ -126,6 +129,10 @@ std::shared_ptr<rawviewer::application::DecodedImage> makeUiImage();
 
 class StaticRawDecoder final : public rawviewer::application::IImageDecoder {
 public:
+    explicit StaticRawDecoder(
+        std::shared_ptr<rawviewer::application::DecodedImage> image = {})
+        : image_(std::move(image)) {}
+
     rawviewer::application::ProbeStrength probe(
         const std::filesystem::path&,
         std::span<const std::byte>,
@@ -135,8 +142,11 @@ public:
 
     rawviewer::application::DecodeResult decode(
         const rawviewer::application::OpenImageRequest&) const override {
-        return {makeUiImage(), {}, {}};
+        return {image_ ? image_ : makeUiImage(), {}, {}};
     }
+
+private:
+    std::shared_ptr<rawviewer::application::DecodedImage> image_;
 };
 
 std::shared_ptr<rawviewer::application::DecodedImage> makeUiImage() {
@@ -155,6 +165,26 @@ std::shared_ptr<rawviewer::application::DecodedImage> makeUiImage() {
     image->preview.grayscale16Pixels = pixels->data();
     image->preview.grayscale16StrideSamples = 10;
     image->pixels = std::make_shared<UiPixelSource>();
+    return image;
+}
+
+std::shared_ptr<rawviewer::application::DecodedImage> makeRectangularUiImage() {
+    auto image = std::make_shared<rawviewer::application::DecodedImage>();
+    image->metadata.kind = rawviewer::application::ImageKind::FlatRaw;
+    image->metadata.width = 3;
+    image->metadata.height = 2;
+    image->metadata.scalarType = rawviewer::domain::ScalarType::UInt16;
+    image->metadata.bayerPattern = rawviewer::domain::BayerPattern::RGGB;
+    image->metadata.whiteLevel = 100.0;
+    image->metadata.format = "Rectangular RAW";
+    image->pixels = std::make_shared<CountingGridPixelSource>(3, 2);
+    auto signal = std::make_shared<rawviewer::application::SignalPreview>();
+    signal->width = 3;
+    signal->height = 2;
+    signal->preservesBayerPhase = true;
+    signal->bayerPattern = rawviewer::domain::BayerPattern::RGGB;
+    signal->values = {0.0F, 1.0F, 2.0F, 10.0F, 11.0F, 12.0F};
+    image->signalPreview = std::move(signal);
     return image;
 }
 
@@ -216,9 +246,10 @@ QRect viewportCanvas(rawviewer::presentation::ImageViewport& viewport) {
         QStringLiteral("imageVerticalScrollBar"));
     Q_ASSERT(horizontal);
     Q_ASSERT(vertical);
-    constexpr int rulerHeight = 24;
-    return QRect(0, rulerHeight, vertical->x(),
-                 horizontal->y() - rulerHeight * 2);
+    constexpr int rulerExtent = 24;
+    return QRect(rulerExtent, rulerExtent,
+                 vertical->x() - rulerExtent,
+                 horizontal->y() - rulerExtent);
 }
 
 QRectF fittedImageRect(rawviewer::presentation::ImageViewport& viewport,
@@ -262,16 +293,22 @@ class PixelStatisticsUiTest final : public QObject {
     Q_OBJECT
 
 private slots:
+    void rendersGlobalChannelHistogramAndSharedDisplayWindow();
     void completesRectangleAndLineWithDrag();
     void exposesCompactTechnicalPaneLayout();
+    void rendersBlackStatisticsPlotAndHoverGuides();
     void rendersFourBayerChannelResultPanes();
     void persistsPixelStatisticsPreferences();
+    void editsWithTransformShortcutsAndGlobalUndo();
     void rendersContinuousCompletePixelValues();
     void rendersBayerMaskAndPatternLabels();
     void rendersExtractedPixelAnnotationsFromSourceCoordinates();
     void supportsMiddleButtonPanDuringStatisticsSelection();
     void rendersRulersOverviewAndSynchronizedScrollBars();
-    void simplifiesPixelInfoAndAutoFormatsRgb();
+    void rendersExactExtractPixelsAtHighZoom();
+    void rendersRgbValuesAsThreeLinesAtLowerLeft();
+    void resetsPixelOverlayGeometryForSecondImage();
+    void previewsPixelInfoOptionsOnRggbGrid();
     void enablesPixelOverlayBeforePixelInfoIsOpened();
     void statisticsComputesFourChannelsFromMainWindow();
     void statisticsUsesDisplayedBayerExtraction();
@@ -283,6 +320,170 @@ private slots:
     void configuresCompactProfessionalDemosaicDialog();
     void demosaicsTheCurrentlyDisplayedFilteredRaw();
 };
+
+void PixelStatisticsUiTest::rendersGlobalChannelHistogramAndSharedDisplayWindow() {
+    using rawviewer::application::GlobalHistogramComponent;
+    using rawviewer::application::GlobalHistogramMode;
+    rawviewer::presentation::HistogramWidget histogram;
+    histogram.resize(360, 220);
+    rawviewer::application::GlobalHistogramResult result;
+    result.mode = GlobalHistogramMode::BayerChannels;
+    result.rangeMinimum = 0.0;
+    result.rangeMaximum = 100.0;
+    for (const auto component : {
+             GlobalHistogramComponent::Red,
+             GlobalHistogramComponent::BayerGreenRed,
+             GlobalHistogramComponent::BayerGreenBlue,
+             GlobalHistogramComponent::Blue}) {
+        rawviewer::application::GlobalHistogramSeries series;
+        series.component = component;
+        series.bins.assign(64, 0);
+        series.bins[8 + result.series.size() * 12] = 100;
+        series.sampleCount = 100;
+        result.series.push_back(std::move(series));
+    }
+    histogram.setResult(std::move(result));
+    histogram.setDisplayWindow(10.0, 90.0);
+    histogram.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&histogram));
+    QCOMPARE(histogram.seriesCount(), std::size_t{4});
+    QVERIFY(histogram.mode() == GlobalHistogramMode::BayerChannels);
+
+    const auto rendered = histogram.grab().toImage().convertToFormat(
+        QImage::Format_ARGB32);
+    const auto projectionBuilds = histogram.projectionBuildCount();
+    QVERIFY(projectionBuilds > 0);
+    const auto hasColorNear = [&rendered](QColor target) {
+        for (int y = 0; y < rendered.height(); ++y) {
+            for (int x = 0; x < rendered.width(); ++x) {
+                const QColor actual = rendered.pixelColor(x, y);
+                if (std::abs(actual.red() - target.red()) < 8 &&
+                    std::abs(actual.green() - target.green()) < 8 &&
+                    std::abs(actual.blue() - target.blue()) < 8) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    QVERIFY(hasColorNear(QColor(239, 76, 82)));
+    QVERIFY(hasColorNear(QColor(113, 224, 105)));
+    QVERIFY(hasColorNear(QColor(54, 205, 181)));
+    QVERIFY(hasColorNear(QColor(73, 133, 255)));
+
+    QSignalSpy changed(
+        &histogram,
+        &rawviewer::presentation::HistogramWidget::displayWindowChanged);
+    QTest::mousePress(&histogram, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(44, 110));
+    QTest::mouseMove(&histogram, QPoint(100, 110), 10);
+    QTest::mouseRelease(&histogram, Qt::LeftButton, Qt::NoModifier,
+                        QPoint(100, 110));
+    QVERIFY(changed.count() >= 1);
+    QVERIFY(histogram.blackPoint() > 20.0);
+    histogram.grab();
+    QCOMPARE(histogram.projectionBuildCount(), projectionBuilds);
+    histogram.setZoomed(true);
+    QVERIFY(histogram.isZoomed());
+
+    auto mappedSource = std::make_shared<CountingGridPixelSource>(100, 100);
+    rawviewer::presentation::ImageViewport mappedViewport;
+    mappedViewport.resize(320, 240);
+    mappedViewport.setImage(makeGridImage(mappedSource));
+    rawviewer::domain::DisplayMapping mapping;
+    mapping.blackPoint = 0.0;
+    mapping.whitePoint = 65535.0;
+    mapping.gamma = 1.0;
+    mappedViewport.setDisplayMapping(mapping);
+    QImage wideWindow(mappedViewport.size(),
+                      QImage::Format_ARGB32_Premultiplied);
+    wideWindow.fill(Qt::transparent);
+    mappedViewport.render(&wideWindow);
+    mapping.whitePoint = 32768.0;
+    mappedViewport.setDisplayMapping(mapping);
+    QImage narrowWindow(mappedViewport.size(),
+                        QImage::Format_ARGB32_Premultiplied);
+    narrowWindow.fill(Qt::transparent);
+    mappedViewport.render(&narrowWindow);
+    mapping.blackPoint = 32768.0;
+    mapping.whitePoint = 65535.0;
+    mappedViewport.setDisplayMapping(mapping);
+    QImage raisedBlack(mappedViewport.size(),
+                       QImage::Format_ARGB32_Premultiplied);
+    raisedBlack.fill(Qt::transparent);
+    mappedViewport.render(&raisedBlack);
+    const QPoint mappedCenter = fittedImageRect(mappedViewport, 100, 100)
+        .center().toPoint();
+    QVERIFY(qGray(narrowWindow.pixel(mappedCenter)) >
+            qGray(wideWindow.pixel(mappedCenter)) + 80);
+    QVERIFY(qGray(narrowWindow.pixel(mappedCenter)) > 245);
+    QVERIFY(qGray(raisedBlack.pixel(mappedCenter)) < 10);
+
+    QTemporaryFile input;
+    QVERIFY(input.open());
+    QVERIFY(input.write("raw") == 3);
+    const QString path = input.fileName();
+    input.close();
+    auto integratedSource =
+        std::make_shared<CountingGridPixelSource>(100, 100);
+    auto integratedImage = makeGridImage(integratedSource);
+    integratedImage->metadata.whiteLevel = 65535.0;
+    auto decoder = std::make_shared<StaticRawDecoder>(integratedImage);
+    auto service = std::make_shared<rawviewer::application::OpenImageService>(
+        std::vector<std::shared_ptr<const rawviewer::application::IImageDecoder>>{
+            decoder});
+    auto store = std::make_shared<MemoryRecentDocumentStore>();
+    rawviewer::presentation::MainWindow window(service, {}, store);
+    window.resize(1000, 700);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    window.openPath(path);
+
+    auto* integrated = window.findChild<
+        rawviewer::presentation::HistogramWidget*>(
+            QStringLiteral("globalHistogramWidget"));
+    auto* black = window.findChild<QDoubleSpinBox*>(
+        QStringLiteral("displayBlackPointSpin"));
+    auto* white = window.findChild<QDoubleSpinBox*>(
+        QStringLiteral("displayWhitePointSpin"));
+    auto* zoom = window.findChild<QToolButton*>(
+        QStringLiteral("histogramWindowZoomButton"));
+    auto* undo = window.findChild<QAction*>(QStringLiteral("undoAction"));
+    QVERIFY(integrated);
+    QVERIFY(black);
+    QVERIFY(white);
+    QVERIFY(zoom);
+    QVERIFY(undo);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        integrated->mode() == GlobalHistogramMode::BayerChannels, 3000);
+    QCOMPARE(integrated->seriesCount(), std::size_t{4});
+    QCOMPARE(black->decimals(), 1);
+    QCOMPARE(white->decimals(), 1);
+    QVERIFY(black->isEnabled());
+    QVERIFY(white->isEnabled());
+    QVERIFY(zoom->isEnabled());
+    QCOMPARE(integratedSource->sampleCalls, std::uint64_t{0});
+    QVERIFY(!undo->isEnabled());
+    const QPoint dragStart(10, integrated->height() / 2);
+    const QPoint dragMiddle(integrated->width() / 5,
+                            integrated->height() / 2);
+    QTest::mousePress(integrated, Qt::LeftButton, Qt::NoModifier, dragStart);
+    for (int step = 1; step <= 12; ++step) {
+        QTest::mouseMove(
+            integrated,
+            dragStart + (dragMiddle - dragStart) * step / 12,
+            1);
+    }
+    QVERIFY(black->value() > 0.0);
+    QVERIFY(!undo->isEnabled());
+    QTest::mouseRelease(integrated, Qt::LeftButton, Qt::NoModifier,
+                        dragMiddle);
+    QTRY_VERIFY(undo->isEnabled());
+    QCOMPARE(integratedSource->sampleCalls, std::uint64_t{0});
+    QCOMPARE(integrated->blackPoint(), black->value());
+    QTest::mouseClick(zoom, Qt::LeftButton);
+    QVERIFY(integrated->isZoomed());
+}
 
 void PixelStatisticsUiTest::completesRectangleAndLineWithDrag() {
     rawviewer::presentation::ImageViewport viewport;
@@ -342,19 +543,37 @@ void PixelStatisticsUiTest::exposesCompactTechnicalPaneLayout() {
 
     auto* layout = qobject_cast<QBoxLayout*>(dialog.layout());
     QVERIFY(layout);
-    QCOMPARE(layout->stretch(0), 1);
-    QCOMPARE(layout->stretch(1), 2);
-    QCOMPARE(layout->stretch(2), 5);
+    QCOMPARE(layout->stretch(0), 0);
+    QCOMPARE(layout->stretch(1), 0);
+    QCOMPARE(layout->stretch(2), 1);
     QVERIFY(dialog.width() <= 780);
     QVERIFY(dialog.minimumWidth() <= 640);
-    QVERIFY(dialog.findChild<QWidget*>(
-        QStringLiteral("statisticsModePane")));
-    QVERIFY(dialog.findChild<QWidget*>(
-        QStringLiteral("statisticsAnalysisPane")));
+    auto* modePane = dialog.findChild<QWidget*>(
+        QStringLiteral("statisticsModePane"));
+    auto* analysisPane = dialog.findChild<QWidget*>(
+        QStringLiteral("statisticsAnalysisPane"));
+    QVERIFY(modePane);
+    QVERIFY(analysisPane);
     QVERIFY(dialog.findChild<QWidget*>(
         QStringLiteral("statisticsPlotPane")));
     QVERIFY(dialog.findChild<QWidget*>(
         QStringLiteral("statisticsMetrics")));
+    QVERIFY(!dialog.findChild<QWidget*>(
+        QStringLiteral("statisticsStateLabel")));
+    QVERIFY(dialog.styleSheet().contains(QStringLiteral("border-radius: 0px")));
+
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    QVERIFY(modePane->height() <= 36);
+    QVERIFY(analysisPane->height() <= 120);
+    for (auto* label : dialog.findChildren<QLabel*>()) {
+        QVERIFY(label->text() != QStringLiteral("MODE"));
+        QVERIFY(label->text() != QStringLiteral("ANALYSIS"));
+        QVERIFY(label->text() != QStringLiteral("PLOT"));
+        if (label->text() == QStringLiteral("COUNT")) {
+            QVERIFY(label->font().pixelSize() >= 14);
+        }
+    }
 
     int modeButtonCount = 0;
     QToolButton* lineButton = nullptr;
@@ -391,6 +610,76 @@ void PixelStatisticsUiTest::exposesCompactTechnicalPaneLayout() {
     QVERIFY(!channels->isEnabled());
     QVERIFY(!channels->isChecked());
     QVERIFY(lineButton->isEnabled());
+}
+
+void PixelStatisticsUiTest::rendersBlackStatisticsPlotAndHoverGuides() {
+    rawviewer::presentation::StatisticsChartWidget chart;
+    chart.resize(500, 300);
+    chart.setShowGrid(false);
+    QPalette chartPalette = chart.palette();
+    chartPalette.setColor(QPalette::Base, QColor(24, 24, 24));
+    chartPalette.setColor(QPalette::Highlight, QColor(170, 170, 170));
+    chart.setPalette(chartPalette);
+
+    rawviewer::application::PixelStatisticsResult result;
+    result.mode = rawviewer::application::PixelStatisticsMode::Line;
+    result.plot.x = {0.0, 1.0, 2.0};
+    result.plot.y = {0.0, 1.0, 0.0};
+    chart.setResult(result);
+    chart.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&chart));
+
+    const auto render = [&chart] {
+        QImage frame(chart.size(), QImage::Format_ARGB32_Premultiplied);
+        frame.fill(Qt::transparent);
+        chart.render(&frame);
+        return frame;
+    };
+    const QImage base = render();
+    QCOMPARE(base.pixelColor(450, 100), QColor(207, 207, 207));
+
+    const QRectF plot(76, 26, 396, 222);
+    QPoint curvePoint;
+    int darkest = 255;
+    for (int y = static_cast<int>(plot.top()) + 3;
+         y < static_cast<int>(plot.bottom()) - 3; ++y) {
+        // Search well inside the segment rather than at a data vertex. This
+        // verifies that hover follows the rendered polyline, even for sparse
+        // profile data whose vertices are far apart.
+        for (int x = 340; x <= 360; ++x) {
+            const int gray = qGray(base.pixel(x, y));
+            if (gray < darkest) {
+                darkest = gray;
+                curvePoint = QPoint(x, y);
+            }
+        }
+    }
+    QVERIFY2(darkest < 20,
+             qPrintable(QStringLiteral("darkest curve pixel=%1 at %2,%3")
+                 .arg(darkest).arg(curvePoint.x()).arg(curvePoint.y())));
+
+    sendMouseMove(chart, curvePoint);
+    const QImage hovered = render();
+    int darkestHorizontalGuide = 255;
+    int darkestVerticalGuide = 255;
+    for (int y = curvePoint.y() - 2; y <= curvePoint.y() + 2; ++y) {
+        for (int x = 100; x <= 120; ++x) {
+            darkestHorizontalGuide = std::min(
+                darkestHorizontalGuide, qGray(hovered.pixel(x, y)));
+        }
+    }
+    for (int x = curvePoint.x() - 2; x <= curvePoint.x() + 2; ++x) {
+        for (int y = 150; y <= 170; ++y) {
+            darkestVerticalGuide = std::min(
+                darkestVerticalGuide, qGray(hovered.pixel(x, y)));
+        }
+    }
+    QVERIFY2(darkestHorizontalGuide < 80,
+             qPrintable(QStringLiteral("horizontal guide=%1")
+                 .arg(darkestHorizontalGuide)));
+    QVERIFY2(darkestVerticalGuide < 80,
+             qPrintable(QStringLiteral("vertical guide=%1")
+                 .arg(darkestVerticalGuide)));
 }
 
 void PixelStatisticsUiTest::rendersFourBayerChannelResultPanes() {
@@ -498,6 +787,95 @@ void PixelStatisticsUiTest::persistsPixelStatisticsPreferences() {
     settings.remove(QStringLiteral("pixelStatistics"));
 }
 
+void PixelStatisticsUiTest::editsWithTransformShortcutsAndGlobalUndo() {
+    QTemporaryFile input;
+    QVERIFY(input.open());
+    QVERIFY(input.write("raw") == 3);
+    const QString path = input.fileName();
+    input.close();
+
+    auto decoder = std::make_shared<StaticRawDecoder>(
+        makeRectangularUiImage());
+    auto service = std::make_shared<rawviewer::application::OpenImageService>(
+        std::vector<std::shared_ptr<const rawviewer::application::IImageDecoder>>{
+            decoder});
+    auto store = std::make_shared<MemoryRecentDocumentStore>();
+    rawviewer::presentation::MainWindow window(service, {}, store);
+    window.resize(1000, 700);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    window.openPath(path);
+
+    auto* undo = window.findChild<QAction*>(QStringLiteral("undoAction"));
+    auto* redo = window.findChild<QAction*>(QStringLiteral("redoAction"));
+    auto* mirror = window.findChild<QAction*>(
+        QStringLiteral("mirrorHorizontalAction"));
+    auto* rotateLeft = window.findChild<QAction*>(
+        QStringLiteral("rotateLeftAction"));
+    QVERIFY(undo);
+    QVERIFY(redo);
+    QVERIFY(mirror);
+    QVERIFY(rotateLeft);
+    QCOMPARE(undo->shortcut(), QKeySequence::Undo);
+    QCOMPARE(redo->shortcut(), QKeySequence::Redo);
+
+    const std::array transformNames{
+        QStringLiteral("flipVerticalAction"),
+        QStringLiteral("mirrorHorizontalAction"),
+        QStringLiteral("rotateLeftAction"),
+        QStringLiteral("rotateRightAction"),
+        QStringLiteral("rotate180Action")};
+    QStringList shortcuts;
+    for (const auto& name : transformNames) {
+        auto* action = window.findChild<QAction*>(name);
+        QVERIFY(action);
+        QTRY_VERIFY_WITH_TIMEOUT(action->isEnabled(), 3000);
+        QVERIFY(!action->shortcut().isEmpty());
+        QVERIFY(!shortcuts.contains(action->shortcut().toString()));
+        shortcuts.push_back(action->shortcut().toString());
+    }
+
+    auto* task = window.findChild<QLabel*>(QStringLiteral("taskStatusLabel"));
+    auto* image = window.findChild<QLabel*>(QStringLiteral("imageStatusLabel"));
+    auto* coordinate = window.findChild<QLabel*>(
+        QStringLiteral("coordinateLabel"));
+    auto* viewport =
+        window.findChild<rawviewer::presentation::ImageViewport*>();
+    QVERIFY(task);
+    QVERIFY(image);
+    QVERIFY(coordinate);
+    QVERIFY(viewport);
+    QTRY_VERIFY_WITH_TIMEOUT(image->text().contains(QStringLiteral("3 × 2")),
+                             3000);
+
+    mirror->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        task->text().contains(QStringLiteral("已完成 Mirror")), 3000);
+    QVERIFY(undo->isEnabled());
+    viewport->imageCoordinateChanged(0, 0, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        coordinate->text().contains(QStringLiteral("Raw 2")), 3000);
+
+    undo->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(redo->isEnabled(), 3000);
+    viewport->imageCoordinateChanged(0, 0, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        coordinate->text().contains(QStringLiteral("Raw 0")), 3000);
+
+    redo->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(undo->isEnabled(), 3000);
+    viewport->imageCoordinateChanged(0, 0, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        coordinate->text().contains(QStringLiteral("Raw 2")), 3000);
+
+    rotateLeft->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(image->text().contains(QStringLiteral("2 × 3")),
+                             3000);
+    undo->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(image->text().contains(QStringLiteral("3 × 2")),
+                             3000);
+}
+
 void PixelStatisticsUiTest::rendersContinuousCompletePixelValues() {
     rawviewer::presentation::PixelInfoDialog optionsDialog;
     QVERIFY(!optionsDialog.options().showMesh);
@@ -536,7 +914,7 @@ void PixelStatisticsUiTest::rendersContinuousCompletePixelValues() {
 
     const QImage rendered = render();
     const int cellPixels = static_cast<int>(std::lround(viewport.zoom()));
-    QCOMPARE(cellPixels, 153);
+    QCOMPARE(cellPixels, 141);
     const QRectF image = fittedImageRect(viewport, 2, 1);
     const auto centerArea = [cellPixels](const QPointF& center) {
         const int radius = std::max(12, cellPixels / 5);
@@ -617,7 +995,7 @@ void PixelStatisticsUiTest::rendersBayerMaskAndPatternLabels() {
     QImage rendered(viewport.size(), QImage::Format_ARGB32_Premultiplied);
     rendered.fill(Qt::transparent);
     viewport.render(&rendered);
-    QCOMPARE(viewport.zoom(), 219.0);
+    QCOMPARE(viewport.zoom(), 231.0);
     QCOMPARE(source->sampleCalls, std::uint64_t{0});
 
     const QRectF image = fittedImageRect(viewport, 2, 2);
@@ -706,7 +1084,7 @@ void PixelStatisticsUiTest::rendersExtractedPixelAnnotationsFromSourceCoordinate
     QImage rendered(viewport.size(), QImage::Format_ARGB32_Premultiplied);
     rendered.fill(Qt::transparent);
     viewport.render(&rendered);
-    QCOMPARE(viewport.zoom(), 219.0);
+    QCOMPARE(viewport.zoom(), 231.0);
     QCOMPARE(source->sampleCalls, std::uint64_t{4});
 
     // Output (0, 0) maps to source (1, 0), which is Gr in RGGB. The
@@ -773,6 +1151,13 @@ void PixelStatisticsUiTest::supportsMiddleButtonPanDuringStatisticsSelection() {
 void PixelStatisticsUiTest::rendersRulersOverviewAndSynchronizedScrollBars() {
     rawviewer::presentation::ImageViewport viewport;
     viewport.resize(500, 360);
+    QPalette rulerPalette = viewport.palette();
+    const QColor rulerBackground(210, 220, 230);
+    const QColor rulerTick(15, 25, 35);
+    rulerPalette.setColor(QPalette::Window, rulerBackground);
+    rulerPalette.setColor(QPalette::WindowText, rulerTick);
+    rulerPalette.setColor(QPalette::Mid, QColor(80, 90, 100));
+    viewport.setPalette(rulerPalette);
     auto source = std::make_shared<CountingGridPixelSource>(10, 10);
     viewport.setImage(makeGridImage(source));
     viewport.show();
@@ -795,24 +1180,35 @@ void PixelStatisticsUiTest::rendersRulersOverviewAndSynchronizedScrollBars() {
     fitted.fill(Qt::transparent);
     viewport.render(&fitted);
 
-    // At this zoom the major ruler interval is five source pixels. Both
-    // rulers must place value 5 on the exact same transformed pixel boundary.
+    QCOMPARE(fitted.pixelColor(5, 5), rulerBackground);
+    QCOMPARE(fitted.pixelColor(5, canvas.center().y()), rulerBackground);
+
+    // At this zoom the major ruler interval is five source pixels. The top
+    // X ruler and left Y ruler must align to the same transformed pixel grid.
     const int tickX = static_cast<int>(std::lround(
         imageRect.left() + 5.0 * viewport.zoom()));
+    const int tickY = static_cast<int>(std::lround(
+        imageRect.top() + 5.0 * viewport.zoom()));
     bool topTick = false;
-    bool bottomTick = false;
+    bool leftTick = false;
     for (int delta = -1; delta <= 1; ++delta) {
         for (int y = canvas.top() - 11; y < canvas.top(); ++y) {
-            topTick = topTick || qGray(fitted.pixel(tickX + delta, y)) >= 170;
+            const QColor color = fitted.pixelColor(tickX + delta, y);
+            topTick = topTick ||
+                (std::abs(color.red() - rulerTick.red()) < 20 &&
+                 std::abs(color.green() - rulerTick.green()) < 20 &&
+                 std::abs(color.blue() - rulerTick.blue()) < 20);
         }
-        for (int y = canvas.bottom() + 1;
-             y <= canvas.bottom() + 11; ++y) {
-            bottomTick = bottomTick ||
-                qGray(fitted.pixel(tickX + delta, y)) >= 170;
+        for (int x = canvas.left() - 11; x < canvas.left(); ++x) {
+            const QColor color = fitted.pixelColor(x, tickY + delta);
+            leftTick = leftTick ||
+                (std::abs(color.red() - rulerTick.red()) < 20 &&
+                 std::abs(color.green() - rulerTick.green()) < 20 &&
+                 std::abs(color.blue() - rulerTick.blue()) < 20);
         }
     }
     QVERIFY(topTick);
-    QVERIFY(bottomTick);
+    QVERIFY(leftTick);
 
     const auto orangeBounds = [&canvas](const QImage& frame) {
         QRect bounds;
@@ -863,7 +1259,40 @@ void PixelStatisticsUiTest::rendersRulersOverviewAndSynchronizedScrollBars() {
     QVERIFY(coordinates.last()[0].toLongLong() > beforeX);
 }
 
-void PixelStatisticsUiTest::simplifiesPixelInfoAndAutoFormatsRgb() {
+void PixelStatisticsUiTest::rendersExactExtractPixelsAtHighZoom() {
+    auto source = std::make_shared<ContrastPixelSource>();
+    auto image = makeContrastImage(source);
+    auto reducedPreview =
+        std::make_shared<std::vector<std::uint16_t>>(1, std::uint16_t{0});
+    image->preview.width = 1;
+    image->preview.height = 1;
+    image->preview.grayscale16Storage = reducedPreview;
+    image->preview.grayscale16Pixels = reducedPreview->data();
+    image->preview.grayscale16StrideSamples = 1;
+
+    rawviewer::presentation::ImageViewport viewport;
+    viewport.resize(500, 240);
+    viewport.setImage(image);
+    QImage first(viewport.size(), QImage::Format_ARGB32_Premultiplied);
+    first.fill(Qt::transparent);
+    viewport.render(&first);
+
+    const QRectF imageRect = fittedImageRect(viewport, 2, 1);
+    const QColor left = first.pixelColor(QPointF(
+        imageRect.left() + imageRect.width() * 0.25,
+        imageRect.center().y()).toPoint());
+    const QColor right = first.pixelColor(QPointF(
+        imageRect.left() + imageRect.width() * 0.75,
+        imageRect.center().y()).toPoint());
+    QVERIFY(qGray(left.rgb()) < 20);
+    QVERIFY(qGray(right.rgb()) > 235);
+    QCOMPARE(source->sampleCalls, std::uint64_t{2});
+
+    viewport.render(&first);
+    QCOMPARE(source->sampleCalls, std::uint64_t{2});
+}
+
+void PixelStatisticsUiTest::rendersRgbValuesAsThreeLinesAtLowerLeft() {
     rawviewer::presentation::PixelInfoDialog dialog;
     QCOMPARE(dialog.findChildren<QCheckBox*>().size(), 3);
     QVERIFY(dialog.findChild<QCheckBox*>(
@@ -888,18 +1317,129 @@ void PixelStatisticsUiTest::simplifiesPixelInfoAndAutoFormatsRgb() {
     viewport.render(&rendered);
 
     const QRectF image = fittedImageRect(viewport, 1, 1);
-    const QPoint center = image.center().toPoint();
     QRect textBounds;
-    for (int y = center.y() - 35; y <= center.y() + 35; ++y) {
-        for (int x = center.x() - 170; x <= center.x() + 170; ++x) {
-            if (qGray(rendered.pixel(x, y)) <= 35) {
+    std::array<int, 3> channelPixelCounts{};
+    const QRect scan(
+        static_cast<int>(std::floor(image.left() + 5.0)),
+        static_cast<int>(std::floor(image.top() + image.height() * 0.25)),
+        static_cast<int>(std::floor(image.width() * 0.6)),
+        static_cast<int>(std::floor(image.height() * 0.75 - 5.0)));
+    for (int y = scan.top(); y <= scan.bottom(); ++y) {
+        for (int x = scan.left(); x <= scan.right(); ++x) {
+            const QColor color = rendered.pixelColor(x, y);
+            const int redScore = color.red() -
+                std::max(color.green(), color.blue());
+            const int greenScore = color.green() -
+                std::max(color.red(), color.blue());
+            const int blueScore = color.blue() -
+                std::max(color.red(), color.green());
+            if (redScore > 30 || greenScore > 25 || blueScore > 30) {
                 textBounds |= QRect(x, y, 1, 1);
+                channelPixelCounts[0] += redScore > 30;
+                channelPixelCounts[1] += greenScore > 25;
+                channelPixelCounts[2] += blueScore > 30;
             }
         }
     }
-    QVERIFY(textBounds.width() > 80);
-    QVERIFY(textBounds.height() >= viewport.zoom() / 8.0);
-    QVERIFY(textBounds.height() <= viewport.zoom() / 4.0);
+    QVERIFY(!textBounds.isEmpty());
+    QVERIFY(textBounds.left() < image.left() + image.width() * 0.2);
+    QVERIFY(textBounds.bottom() > image.top() + image.height() * 0.8);
+    QVERIFY2(textBounds.height() >= viewport.zoom() / 5.0,
+             qPrintable(QStringLiteral("text=%1x%2 zoom=%3 scan=%4x%5")
+                 .arg(textBounds.width()).arg(textBounds.height())
+                 .arg(viewport.zoom()).arg(scan.width()).arg(scan.height())));
+    QVERIFY(textBounds.height() <= viewport.zoom() * 0.5);
+    for (const int count : channelPixelCounts) {
+        QVERIFY(count > 0);
+    }
+}
+
+void PixelStatisticsUiTest::resetsPixelOverlayGeometryForSecondImage() {
+    rawviewer::presentation::ImageViewport viewport;
+    viewport.resize(600, 600);
+    rawviewer::presentation::PixelOverlayOptions options;
+    options.enabled = true;
+    viewport.setPixelOverlayOptions(options);
+
+    auto firstSource = std::make_shared<ContrastPixelSource>();
+    viewport.setImage(makeContrastImage(firstSource));
+    viewport.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&viewport));
+    const QPoint firstCenter = fittedImageRect(viewport, 2, 1).center().toPoint();
+    QTest::mousePress(&viewport, Qt::LeftButton, Qt::NoModifier, firstCenter);
+
+    QSignalSpy coordinates(
+        &viewport,
+        &rawviewer::presentation::ImageViewport::imageCoordinateChanged);
+    auto secondSource = std::make_shared<CountingGridPixelSource>(10, 10);
+    viewport.setImage(makeGridImage(secondSource));
+    QVERIFY(!coordinates.isEmpty());
+    QCOMPARE(coordinates.last()[2].toBool(), false);
+
+    QImage rendered(viewport.size(), QImage::Format_ARGB32_Premultiplied);
+    rendered.fill(Qt::transparent);
+    viewport.render(&rendered);
+    QVERIFY(secondSource->sampleCalls > 0);
+
+    coordinates.clear();
+    const QPoint secondCenter = fittedImageRect(viewport, 10, 10)
+        .center().toPoint();
+    sendMouseMove(viewport, secondCenter);
+    QVERIFY(!coordinates.isEmpty());
+    QCOMPARE(coordinates.last()[0].toLongLong(), qint64{5});
+    QCOMPARE(coordinates.last()[1].toLongLong(), qint64{5});
+    QCOMPARE(coordinates.last()[2].toBool(), true);
+}
+
+void PixelStatisticsUiTest::previewsPixelInfoOptionsOnRggbGrid() {
+    rawviewer::presentation::PixelInfoDialog dialog;
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    auto* preview = dialog.findChild<QWidget*>(
+        QStringLiteral("pixelOverlayPreview"));
+    auto* enabled = dialog.findChild<QCheckBox*>(
+        QStringLiteral("pixelValueOverlayCheck"));
+    auto* mesh = dialog.findChild<QCheckBox*>(
+        QStringLiteral("bayerMeshCheck"));
+    auto* pattern = dialog.findChild<QCheckBox*>(
+        QStringLiteral("bayerPatternCheck"));
+    QVERIFY(preview);
+    QVERIFY(enabled);
+    QVERIFY(mesh);
+    QVERIFY(pattern);
+    QCOMPARE(preview->property("gridColumns").toInt(), 4);
+    QCOMPARE(preview->property("gridRows").toInt(), 4);
+    QVERIFY(!dialog.styleSheet().contains(QStringLiteral("border-radius")));
+
+    const auto renderPreview = [preview] {
+        QImage frame(preview->size(), QImage::Format_ARGB32_Premultiplied);
+        frame.fill(Qt::transparent);
+        preview->render(&frame);
+        return frame;
+    };
+    const auto differs = [](const QImage& left, const QImage& right) {
+        if (left.size() != right.size()) return true;
+        for (int y = 0; y < left.height(); ++y) {
+            for (int x = 0; x < left.width(); ++x) {
+                if (left.pixel(x, y) != right.pixel(x, y)) return true;
+            }
+        }
+        return false;
+    };
+
+    const QImage valuesOnly = renderPreview();
+    mesh->setChecked(true);
+    QCoreApplication::processEvents();
+    const QImage withMesh = renderPreview();
+    QVERIFY(differs(valuesOnly, withMesh));
+    pattern->setChecked(true);
+    QCoreApplication::processEvents();
+    const QImage withPattern = renderPreview();
+    QVERIFY(differs(withMesh, withPattern));
+    enabled->setChecked(false);
+    QCoreApplication::processEvents();
+    const QImage withoutValues = renderPreview();
+    QVERIFY(differs(withPattern, withoutValues));
 }
 
 void PixelStatisticsUiTest::enablesPixelOverlayBeforePixelInfoIsOpened() {
@@ -1114,7 +1654,8 @@ void PixelStatisticsUiTest::pixelAnnotationUsesSecondIndependentExtraction() {
         coordinate->text().contains(QStringLiteral("Extract")), 3000);
     QVERIFY2(coordinate->text().contains(QStringLiteral("Raw 1")),
              qPrintable(coordinate->text()));
-    QVERIFY(coordinate->text().contains(QStringLiteral("Source (1, 0)")));
+    QVERIFY(coordinate->text().contains(QStringLiteral("坐标 0, 0")));
+    QVERIFY(!coordinate->text().contains(QStringLiteral("Source")));
 }
 
 void PixelStatisticsUiTest::editsAndPersistsBayerMaskPatterns() {
@@ -1368,8 +1909,12 @@ void PixelStatisticsUiTest::filtersTheCurrentlyDisplayedBayerExtraction() {
     };
     auto* extractAction = findAction(QStringLiteral("Bayer Extract"));
     auto* filterAction = findAction(QStringLiteral("Filter"));
+    auto* statisticsAction = findAction(QStringLiteral("Pixel Statistics"));
+    auto* undoAction = window.findChild<QAction*>(QStringLiteral("undoAction"));
     QVERIFY(extractAction);
     QVERIFY(filterAction);
+    QVERIFY(statisticsAction);
+    QVERIFY(undoAction);
     QTRY_VERIFY_WITH_TIMEOUT(extractAction->isEnabled(), 3000);
     QTRY_VERIFY_WITH_TIMEOUT(filterAction->isEnabled(), 3000);
 
@@ -1411,6 +1956,33 @@ void PixelStatisticsUiTest::filtersTheCurrentlyDisplayedBayerExtraction() {
     viewport->imageCoordinateChanged(0, 0, true);
     QTRY_VERIFY_WITH_TIMEOUT(
         coordinate->text().contains(QStringLiteral("Raw 7.333")), 3000);
+
+    statisticsAction->trigger();
+    auto* statisticsDialog =
+        window.findChild<rawviewer::presentation::PixelStatisticsDialog*>();
+    QVERIFY(statisticsDialog);
+    QVERIFY(statisticsDialog->isVisible());
+    const QPoint firstPixel = imagePixelCenter(*viewport, 5, 5, 0, 0);
+    QTest::mousePress(viewport, Qt::LeftButton, Qt::NoModifier, firstPixel);
+    QTest::mouseRelease(viewport, Qt::LeftButton, Qt::NoModifier, firstPixel);
+    const auto hasMetric = [statisticsDialog](const QString& value) {
+        const auto labels = statisticsDialog->findChildren<QLabel*>();
+        return std::any_of(
+            labels.begin(), labels.end(),
+            [&value](const QLabel* label) {
+                return label->property("role") ==
+                           QStringLiteral("metricValue") &&
+                    label->text() == value;
+            });
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(hasMetric(QStringLiteral("7.3333")), 3000);
+
+    QVERIFY(undoAction->isEnabled());
+    undoAction->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(hasMetric(QStringLiteral("0.0000")), 3000);
+    viewport->imageCoordinateChanged(0, 0, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        coordinate->text().contains(QStringLiteral("Raw 0")), 3000);
 }
 
 void PixelStatisticsUiTest::configuresCompactProfessionalDemosaicDialog() {
@@ -1531,7 +2103,7 @@ void PixelStatisticsUiTest::demosaicsTheCurrentlyDisplayedFilteredRaw() {
     QVERIFY(coordinate);
     viewport->imageCoordinateChanged(0, 0, true);
     QTRY_VERIFY2_WITH_TIMEOUT(
-        coordinate->text().contains(QStringLiteral("RGB 37,51,61")),
+        coordinate->text().contains(QStringLiteral("RGB 4,7,11")),
         qPrintable(coordinate->text()), 3000);
     auto* restore = demosaicDialog->findChild<QPushButton*>(
         QStringLiteral("demosaicRestoreButton"));

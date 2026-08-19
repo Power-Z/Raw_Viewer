@@ -3,6 +3,8 @@ add_library(rawviewer_application STATIC
     demosaic.cpp
     document_session.cpp
     filter.cpp
+    global_histogram.cpp
+    image_transform.cpp
     open_image_service.cpp
     pixel_info.cpp
     pixel_statistics.cpp

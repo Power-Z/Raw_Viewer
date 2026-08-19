@@ -8,6 +8,8 @@ class QCheckBox;
 
 namespace rawviewer::presentation {
 
+class PixelOverlayPreviewWidget;
+
 class PixelInfoDialog final : public QDialog {
     Q_OBJECT
 
@@ -25,6 +27,7 @@ private:
     QCheckBox* enabledCheck_ = nullptr;
     QCheckBox* meshCheck_ = nullptr;
     QCheckBox* bayerLabelCheck_ = nullptr;
+    PixelOverlayPreviewWidget* preview_ = nullptr;
 };
 
 } // namespace rawviewer::presentation

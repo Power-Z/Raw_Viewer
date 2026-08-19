@@ -6,6 +6,8 @@
 
 #include <optional>
 
+class QMouseEvent;
+
 namespace rawviewer::presentation {
 
 class StatisticsChartWidget final : public QWidget {
@@ -23,6 +25,8 @@ public:
 
 protected:
     void paintEvent(QPaintEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void leaveEvent(QEvent* event) override;
 
 private:
     std::optional<application::PixelStatisticsResult> result_;
@@ -31,6 +35,8 @@ private:
     bool showPoints_ = false;
     bool fillHistogram_ = true;
     int lineWidth_ = 1;
+    QPointF hoverPosition_;
+    bool hoverActive_ = false;
 };
 
 } // namespace rawviewer::presentation

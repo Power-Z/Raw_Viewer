@@ -23,6 +23,8 @@ struct StatisticsSelection {
     std::uint64_t y0 = 0;
     std::uint64_t x1 = 0;
     std::uint64_t y1 = 0;
+
+    bool operator==(const StatisticsSelection&) const = default;
 };
 
 struct StatisticsSummary {

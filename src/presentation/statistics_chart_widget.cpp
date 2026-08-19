@@ -1,12 +1,16 @@
 #include "presentation/statistics_chart_widget.h"
 
 #include <QFontMetrics>
+#include <QLineF>
 #include <QLocale>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPaintEvent>
 
 #include <algorithm>
+#include <array>
+#include <cstddef>
 #include <cmath>
 #include <limits>
 
@@ -29,16 +33,19 @@ StatisticsChartWidget::StatisticsChartWidget(QWidget* parent)
       emptyMessage_(tr("在图像上完成区域选择后显示结果")) {
     setMinimumSize(240, 120);
     setAutoFillBackground(false);
+    setMouseTracking(true);
 }
 
 void StatisticsChartWidget::setResult(
     const application::PixelStatisticsResult& result) {
     result_ = result;
+    hoverActive_ = false;
     update();
 }
 
 void StatisticsChartWidget::clear(const QString& message) {
     result_.reset();
+    hoverActive_ = false;
     emptyMessage_ = message.isEmpty()
         ? tr("在图像上完成区域选择后显示结果")
         : message;
@@ -65,6 +72,19 @@ void StatisticsChartWidget::setLineWidth(int width) {
     update();
 }
 
+void StatisticsChartWidget::mouseMoveEvent(QMouseEvent* event) {
+    hoverPosition_ = event->position();
+    hoverActive_ = true;
+    update();
+    QWidget::mouseMoveEvent(event);
+}
+
+void StatisticsChartWidget::leaveEvent(QEvent* event) {
+    hoverActive_ = false;
+    update();
+    QWidget::leaveEvent(event);
+}
+
 void StatisticsChartWidget::paintEvent(QPaintEvent*) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
@@ -86,6 +106,7 @@ void StatisticsChartWidget::paintEvent(QPaintEvent*) {
                       topMargin,
                       std::max(1, width() - leftMargin - rightMargin),
                       std::max(1, height() - topMargin - bottomMargin));
+    painter.fillRect(plot, QColor(207, 207, 207));
     const auto& xs = result_->plot.x;
     const auto& ys = result_->plot.y;
     const auto [xMinimumIt, xMaximumIt] =
@@ -119,13 +140,10 @@ void StatisticsChartWidget::paintEvent(QPaintEvent*) {
     painter.save();
     painter.setClipRect(plot.adjusted(-1, -1, 1, 1));
     if (showGrid_) {
-        QPen gridPen(palette().color(QPalette::Mid));
+        QPen gridPen(QColor(145, 145, 145, 150));
         gridPen.setCosmetic(true);
+        gridPen.setWidthF(0.5);
         gridPen.setStyle(Qt::DashLine);
-        gridPen.setColor(QColor(gridPen.color().red(),
-                                gridPen.color().green(),
-                                gridPen.color().blue(),
-                                100));
         painter.setPen(gridPen);
         for (int tick = 0; tick <= 5; ++tick) {
             const double fraction = tick / 5.0;
@@ -140,15 +158,20 @@ void StatisticsChartWidget::paintEvent(QPaintEvent*) {
         }
     }
 
-    const QColor accent = palette().color(QPalette::Highlight);
+    // Thin antialiased black strokes are blended into gray on the fixed plot
+    // background. Keep data strokes aliased so the visible center pixel stays
+    // pure black even at the compact sub-pixel widths requested by the UI.
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    const QColor plotLine(Qt::black);
     if (result_->plot.histogram) {
         const double barWidth = plot.width() /
             static_cast<double>(std::max<std::size_t>(1, ys.size()));
-        QPen outline(accent);
-        outline.setWidthF(std::max(0.5, static_cast<double>(lineWidth_) / 2.0));
+        QPen outline(plotLine);
+        outline.setCosmetic(true);
+        outline.setWidthF(std::max(1.0, static_cast<double>(lineWidth_) * 0.5));
         painter.setPen(outline);
         painter.setBrush(fillHistogram_
-            ? QColor(accent.red(), accent.green(), accent.blue(), 125)
+            ? QColor(0, 0, 0, 55)
             : Qt::NoBrush);
         for (std::size_t index = 0; index < ys.size(); ++index) {
             const double left = plot.left() + index * barWidth;
@@ -184,14 +207,16 @@ void StatisticsChartWidget::paintEvent(QPaintEvent*) {
                 }
             }
         }
-        QPen linePen(accent);
-        linePen.setWidth(lineWidth_);
+        QPen linePen(plotLine);
+        linePen.setCosmetic(true);
+        linePen.setWidthF(std::max(1.0,
+                                   static_cast<double>(lineWidth_) * 0.75));
         linePen.setJoinStyle(Qt::RoundJoin);
         painter.setPen(linePen);
         painter.setBrush(Qt::NoBrush);
         painter.drawPath(path);
         if (showPoints_ && ys.size() <= 2000) {
-            painter.setBrush(accent);
+            painter.setBrush(plotLine);
             for (std::size_t index = 0; index < ys.size(); ++index) {
                 painter.drawEllipse(QPointF(mapX(xs[index]), mapY(ys[index])),
                                     2.5,
@@ -199,9 +224,76 @@ void StatisticsChartWidget::paintEvent(QPaintEvent*) {
             }
         }
     }
+
+    const std::size_t sampleCount = std::min(xs.size(), ys.size());
+    if (hoverActive_ && plot.contains(hoverPosition_) && sampleCount > 0) {
+        const double hoveredX = xMinimum +
+            (hoverPosition_.x() - plot.left()) / plot.width() *
+                (xMaximum - xMinimum);
+        const auto end = xs.begin() + static_cast<std::ptrdiff_t>(sampleCount);
+        const auto found = std::lower_bound(xs.begin(), end, hoveredX);
+        const auto foundIndex = static_cast<std::size_t>(found - xs.begin());
+        QPointF nearestPoint;
+        double nearestDistance = std::numeric_limits<double>::max();
+        if (!result_->plot.histogram && sampleCount > 1) {
+            std::array<std::size_t, 2> segmentStarts{
+                foundIndex > 0 ? foundIndex - 1 : sampleCount,
+                foundIndex < sampleCount - 1 ? foundIndex : sampleCount};
+            for (const auto start : segmentStarts) {
+                if (start >= sampleCount - 1) continue;
+                const QPointF a(mapX(xs[start]), mapY(ys[start]));
+                const QPointF b(mapX(xs[start + 1]), mapY(ys[start + 1]));
+                const double dx = b.x() - a.x();
+                const double dy = b.y() - a.y();
+                const double lengthSquared = dx * dx + dy * dy;
+                const double projection = lengthSquared > 0.0
+                    ? ((hoverPosition_.x() - a.x()) * dx +
+                       (hoverPosition_.y() - a.y()) * dy) / lengthSquared
+                    : 0.0;
+                const double t = std::clamp(projection, 0.0, 1.0);
+                const QPointF point(a.x() + t * dx, a.y() + t * dy);
+                const double distance = QLineF(point, hoverPosition_).length();
+                if (distance < nearestDistance) {
+                    nearestPoint = point;
+                    nearestDistance = distance;
+                }
+            }
+        } else {
+            const std::array<std::size_t, 2> candidates{
+                foundIndex < sampleCount ? foundIndex : sampleCount,
+                foundIndex > 0 ? foundIndex - 1 : sampleCount};
+            for (const auto index : candidates) {
+                if (index >= sampleCount) continue;
+                const QPointF point(mapX(xs[index]), mapY(ys[index]));
+                const double distance = QLineF(point, hoverPosition_).length();
+                if (distance < nearestDistance) {
+                    nearestPoint = point;
+                    nearestDistance = distance;
+                }
+            }
+        }
+        if (nearestDistance <= 14.0) {
+            QPen guidePen(Qt::black);
+            guidePen.setCosmetic(true);
+            guidePen.setWidthF(1.0);
+            guidePen.setStyle(Qt::SolidLine);
+            painter.setPen(guidePen);
+            painter.setBrush(Qt::NoBrush);
+            painter.drawLine(QPointF(plot.left(), nearestPoint.y()),
+                             nearestPoint);
+            painter.drawLine(nearestPoint,
+                             QPointF(nearestPoint.x(), plot.bottom()));
+            painter.setPen(QPen(Qt::black, 0.75));
+            painter.setBrush(QColor(207, 207, 207));
+            painter.drawEllipse(nearestPoint, 3.0, 3.0);
+        }
+    }
     painter.restore();
 
-    painter.setPen(palette().color(QPalette::Text));
+    QPen axisPen(palette().color(QPalette::Text));
+    axisPen.setCosmetic(true);
+    axisPen.setWidthF(0.5);
+    painter.setPen(axisPen);
     painter.drawRect(plot);
     const QFontMetrics metrics(painter.font());
     for (int tick = 0; tick <= 5; ++tick) {

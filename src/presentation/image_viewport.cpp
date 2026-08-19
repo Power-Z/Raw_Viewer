@@ -27,6 +27,10 @@ namespace {
 constexpr int rulerExtent = 24;
 constexpr int scrollBarExtent = 14;
 constexpr int maximumScrollRange = 2'000'000'000;
+// Exact source sampling runs on the paint path, so only enable it once a
+// source pixel is visibly large and keep the work bounded for 4K viewports.
+constexpr double exactPixelMinimumZoom = 16.0;
+constexpr qint64 maximumExactPixelCacheSamples = 65'536;
 
 double niceRulerStep(double minimumStep) {
     minimumStep = std::max(1.0, minimumStep);
@@ -88,9 +92,29 @@ ImageViewport::ImageViewport(QWidget* parent)
 void ImageViewport::setImage(
     std::shared_ptr<const application::DecodedImage> image,
     bool preserveView) {
+    if (!preserveView) {
+        // A queued move/release from the previous document must never apply
+        // its drag anchor or selection geometry to the replacement image.
+        dragging_ = false;
+        draggingButton_ = Qt::NoButton;
+        lastMouse_ = {};
+        statisticsSelectionStarted_ = false;
+        statisticsSelectionVisible_ = false;
+        zoom_ = 1.0;
+        offset_ = {};
+        fitMode_ = true;
+        if (statisticsTool_ == StatisticsSelectionTool::None) {
+            unsetCursor();
+        } else {
+            setCursor(Qt::CrossCursor);
+        }
+        emit imageCoordinateChanged(0, 0, false);
+    }
     preview_ = {};
     image_ = std::move(image);
     invalidatePixelOverlayCache();
+    invalidateExactPixelCache();
+    invalidateMappedGrayscaleCache();
     if (!image_) {
         clearImage();
         return;
@@ -128,8 +152,11 @@ void ImageViewport::clearImage() {
     preview_ = {};
     image_.reset();
     invalidatePixelOverlayCache();
+    invalidateExactPixelCache();
+    invalidateMappedGrayscaleCache();
     zoom_ = 1.0;
     offset_ = {};
+    emit imageCoordinateChanged(0, 0, false);
     updateScrollBars();
     update();
 }
@@ -164,6 +191,8 @@ void ImageViewport::setDisplayMapping(
     }
     displayMapping_ = mapping;
     invalidatePixelOverlayCache();
+    invalidateExactPixelCache();
+    invalidateMappedGrayscaleCache();
     update();
 }
 
@@ -213,7 +242,17 @@ void ImageViewport::paintEvent(QPaintEvent*) {
                         offset_.y(),
                         image_->metadata.width * zoom_,
                         image_->metadata.height * zoom_);
-    painter.drawImage(target, preview_);
+    const bool directGrayscale = image_->preview.hasGrayscale16() &&
+        image_->preview.width ==
+            static_cast<int>(image_->metadata.width) &&
+        image_->preview.height ==
+            static_cast<int>(image_->metadata.height);
+    if (directGrayscale) {
+        drawMappedGrayscale16(painter, canvas, target);
+    } else {
+        painter.drawImage(target, preview_);
+    }
+    drawExactPixelLayer(painter);
     painter.setPen(palette().color(QPalette::Mid));
     painter.drawRect(target);
     drawPixelOverlay(painter);
@@ -224,69 +263,96 @@ void ImageViewport::paintEvent(QPaintEvent*) {
 }
 
 QRect ImageViewport::canvasRect() const {
-    return QRect(0,
+    return QRect(rulerExtent,
                  rulerExtent,
-                 std::max(0, width() - scrollBarExtent),
-                 std::max(0, height() - rulerExtent * 2 - scrollBarExtent));
+                 std::max(0, width() - rulerExtent - scrollBarExtent),
+                 std::max(0, height() - rulerExtent - scrollBarExtent));
 }
 
 void ImageViewport::drawRulers(QPainter& painter) {
     const QRect canvas = canvasRect();
     const QRect topRuler(canvas.left(), 0, canvas.width(), rulerExtent);
-    const QRect bottomRuler(
-        canvas.left(), canvas.bottom() + 1, canvas.width(), rulerExtent);
-    const QColor background(35, 39, 47);
-    const QColor border(83, 91, 104);
-    const QColor tick(207, 214, 224);
+    const QRect leftRuler(0, canvas.top(), rulerExtent, canvas.height());
+    const QColor background = palette().color(QPalette::Window);
+    const QColor border = palette().color(QPalette::Mid);
+    const QColor tick = palette().color(QPalette::WindowText);
     painter.fillRect(topRuler, background);
-    painter.fillRect(bottomRuler, background);
+    painter.fillRect(leftRuler, background);
+    painter.fillRect(QRect(0, 0, rulerExtent, rulerExtent), background);
     painter.fillRect(QRect(canvas.right() + 1, 0,
-                           scrollBarExtent, height() - scrollBarExtent),
-                     background);
+                           scrollBarExtent, rulerExtent), background);
+    painter.fillRect(QRect(0, canvas.bottom() + 1,
+                           rulerExtent, scrollBarExtent), background);
     painter.setPen(border);
     painter.drawLine(topRuler.bottomLeft(), topRuler.bottomRight());
-    painter.drawLine(bottomRuler.topLeft(), bottomRuler.topRight());
+    painter.drawLine(leftRuler.topRight(), leftRuler.bottomRight());
 
-    if (!image_ || image_->metadata.width == 0 || zoom_ <= 0.0) {
+    if (!image_ || image_->metadata.width == 0 ||
+        image_->metadata.height == 0 || zoom_ <= 0.0) {
         return;
     }
-    const double visibleStart = std::max(
+    const double visibleXStart = std::max(
         0.0, (canvas.left() - offset_.x()) / zoom_);
-    const double visibleEnd = std::min(
+    const double visibleXEnd = std::min(
         static_cast<double>(image_->metadata.width),
         (canvas.right() + 1.0 - offset_.x()) / zoom_);
-    if (visibleEnd < visibleStart) {
+    const double visibleYStart = std::max(
+        0.0, (canvas.top() - offset_.y()) / zoom_);
+    const double visibleYEnd = std::min(
+        static_cast<double>(image_->metadata.height),
+        (canvas.bottom() + 1.0 - offset_.y()) / zoom_);
+    if (visibleXEnd < visibleXStart || visibleYEnd < visibleYStart) {
         return;
     }
 
     const auto majorStep = static_cast<qint64>(
         niceRulerStep(80.0 / zoom_));
     const qint64 minorStep = majorStep >= 5 ? majorStep / 5 : 1;
-    const qint64 first = std::max<qint64>(
-        0, static_cast<qint64>(std::floor(visibleStart / minorStep)) * minorStep);
-    const qint64 last = std::min<qint64>(
+    const qint64 firstX = std::max<qint64>(
+        0, static_cast<qint64>(std::floor(visibleXStart / minorStep)) * minorStep);
+    const qint64 lastX = std::min<qint64>(
         static_cast<qint64>(image_->metadata.width),
-        static_cast<qint64>(std::ceil(visibleEnd)));
+        static_cast<qint64>(std::ceil(visibleXEnd)));
+    const qint64 firstY = std::max<qint64>(
+        0, static_cast<qint64>(std::floor(visibleYStart / minorStep)) * minorStep);
+    const qint64 lastY = std::min<qint64>(
+        static_cast<qint64>(image_->metadata.height),
+        static_cast<qint64>(std::ceil(visibleYEnd)));
 
     painter.save();
-    painter.setClipRect(topRuler.united(bottomRuler));
     painter.setPen(tick);
     QFont rulerFont = painter.font();
     rulerFont.setPixelSize(9);
     painter.setFont(rulerFont);
-    for (qint64 value = first; value <= last;) {
+    painter.setClipRect(topRuler);
+    for (qint64 value = firstX; value <= lastX;) {
         const double x = offset_.x() + static_cast<double>(value) * zoom_;
         const bool major = value % majorStep == 0;
         const int length = major ? 10 : 5;
         painter.drawLine(QPointF(x, topRuler.bottom()),
                          QPointF(x, topRuler.bottom() - length));
-        painter.drawLine(QPointF(x, bottomRuler.top()),
-                         QPointF(x, bottomRuler.top() + length));
+        if (major) {
+            painter.drawText(QPointF(x + 3.0, 10.0), QString::number(value));
+        }
+        if (value > std::numeric_limits<qint64>::max() - minorStep) {
+            break;
+        }
+        value += minorStep;
+    }
+    painter.setClipRect(leftRuler);
+    for (qint64 value = firstY; value <= lastY;) {
+        const double y = offset_.y() + static_cast<double>(value) * zoom_;
+        const bool major = value % majorStep == 0;
+        const int length = major ? 10 : 5;
+        painter.drawLine(QPointF(leftRuler.right(), y),
+                         QPointF(leftRuler.right() - length, y));
         if (major) {
             const QString label = QString::number(value);
-            painter.drawText(QPointF(x + 3.0, 10.0), label);
-            painter.drawText(QPointF(x + 3.0, bottomRuler.bottom() - 3.0),
-                             label);
+            painter.save();
+            painter.translate(9.0, y - 3.0);
+            painter.rotate(-90.0);
+            painter.drawText(QPointF(0.0, 0.0), label);
+            painter.restore();
         }
         if (value > std::numeric_limits<qint64>::max() - minorStep) {
             break;
@@ -294,6 +360,212 @@ void ImageViewport::drawRulers(QPainter& painter) {
         value += minorStep;
     }
     painter.restore();
+}
+
+void ImageViewport::drawExactPixelLayer(QPainter& painter) {
+    if (!image_ || !image_->pixels || preview_.isNull() ||
+        zoom_ < exactPixelMinimumZoom ||
+        (preview_.width() == static_cast<qint64>(image_->metadata.width) &&
+         preview_.height() == static_cast<qint64>(image_->metadata.height))) {
+        return;
+    }
+    const QRect canvas = canvasRect();
+    const qint64 left = std::clamp<qint64>(
+        static_cast<qint64>(std::floor((canvas.left() - offset_.x()) / zoom_)),
+        0, static_cast<qint64>(image_->metadata.width));
+    const qint64 top = std::clamp<qint64>(
+        static_cast<qint64>(std::floor((canvas.top() - offset_.y()) / zoom_)),
+        0, static_cast<qint64>(image_->metadata.height));
+    const qint64 right = std::clamp<qint64>(
+        static_cast<qint64>(std::ceil(
+            (canvas.right() + 1.0 - offset_.x()) / zoom_)),
+        0, static_cast<qint64>(image_->metadata.width));
+    const qint64 bottom = std::clamp<qint64>(
+        static_cast<qint64>(std::ceil(
+            (canvas.bottom() + 1.0 - offset_.y()) / zoom_)),
+        0, static_cast<qint64>(image_->metadata.height));
+    const QRect requested(static_cast<int>(left), static_cast<int>(top),
+                          static_cast<int>(right - left),
+                          static_cast<int>(bottom - top));
+    if (requested.isEmpty() || !ensureExactPixelCache(requested)) {
+        return;
+    }
+    painter.save();
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, false);
+    const QRectF target(
+        offset_.x() + exactPixelCacheRegion_.x() * zoom_,
+        offset_.y() + exactPixelCacheRegion_.y() * zoom_,
+        exactPixelCacheRegion_.width() * zoom_,
+        exactPixelCacheRegion_.height() * zoom_);
+    painter.drawImage(target, exactPixelCache_);
+    painter.restore();
+}
+
+void ImageViewport::invalidateExactPixelCache() {
+    exactPixelCache_ = {};
+    exactPixelCacheRegion_ = {};
+    exactPixelCacheImage_ = nullptr;
+}
+
+bool ImageViewport::ensureExactPixelCache(const QRect& sourceRegion) {
+    const bool compatible = exactPixelCacheImage_ == image_.get() &&
+        exactPixelCacheMapping_ == displayMapping_;
+    if (compatible && exactPixelCacheRegion_.contains(sourceRegion)) {
+        return true;
+    }
+    const auto imageWidth = static_cast<int>(std::min<std::uint64_t>(
+        image_->metadata.width, std::numeric_limits<int>::max()));
+    const auto imageHeight = static_cast<int>(std::min<std::uint64_t>(
+        image_->metadata.height, std::numeric_limits<int>::max()));
+    constexpr int margin = 2;
+    const QRect expanded = sourceRegion.adjusted(-margin, -margin,
+                                                  margin, margin)
+        .intersected(QRect(0, 0, imageWidth, imageHeight));
+    const qint64 sampleCount = static_cast<qint64>(expanded.width()) *
+        expanded.height();
+    if (expanded.isEmpty() || sampleCount > maximumExactPixelCacheSamples) {
+        return false;
+    }
+
+    QImage next(expanded.size(), QImage::Format_ARGB32);
+    for (int y = 0; y < expanded.height(); ++y) {
+        auto* row = reinterpret_cast<QRgb*>(next.scanLine(y));
+        for (int x = 0; x < expanded.width(); ++x) {
+            const auto sample = image_->pixels->sample(
+                static_cast<std::uint64_t>(expanded.x() + x),
+                static_cast<std::uint64_t>(expanded.y() + y));
+            if (!sample.valid) {
+                row[x] = qRgba(0, 0, 0, 255);
+                continue;
+            }
+            if (sample.rgbValid) {
+                row[x] = qRgba(sample.red, sample.green, sample.blue, 255);
+                continue;
+            }
+            const auto gray = static_cast<int>(std::round(
+                domain::mapDisplayValue(sample.value, displayMapping_) * 255.0));
+            row[x] = qRgba(gray, gray, gray, 255);
+        }
+    }
+    exactPixelCache_ = std::move(next);
+    exactPixelCacheRegion_ = expanded;
+    exactPixelCacheImage_ = image_.get();
+    exactPixelCacheMapping_ = displayMapping_;
+    return true;
+}
+
+void ImageViewport::ensureGrayscaleDisplayLut() {
+    if (grayscaleDisplayLutValid_ &&
+        grayscaleDisplayLutMapping_ == displayMapping_) {
+        return;
+    }
+    if (!domain::validateDisplayMapping(displayMapping_).valid) {
+        grayscaleDisplayLut_.fill(0);
+        grayscaleDisplayLutMapping_ = displayMapping_;
+        grayscaleDisplayLutValid_ = true;
+        return;
+    }
+    const double range =
+        displayMapping_.whitePoint - displayMapping_.blackPoint;
+    const double inverseGamma = 1.0 / displayMapping_.gamma;
+    const bool linear = displayMapping_.gamma == 1.0;
+    for (std::size_t index = 0; index < grayscaleDisplayLut_.size(); ++index) {
+        const double normalized = std::clamp(
+            (static_cast<double>(index) - displayMapping_.blackPoint) / range,
+            0.0, 1.0);
+        const double mapped = linear
+            ? normalized : std::pow(normalized, inverseGamma);
+        grayscaleDisplayLut_[index] = static_cast<std::uint8_t>(std::clamp(
+            std::lround(mapped * 255.0),
+            0L, 255L));
+    }
+    grayscaleDisplayLutMapping_ = displayMapping_;
+    grayscaleDisplayLutValid_ = true;
+}
+
+void ImageViewport::invalidateMappedGrayscaleCache() {
+    mappedGrayscaleCache_ = {};
+    mappedGrayscaleTarget_ = {};
+    mappedGrayscaleImageTarget_ = {};
+    mappedGrayscaleImage_ = nullptr;
+    grayscaleDisplayLutValid_ = false;
+}
+
+void ImageViewport::drawMappedGrayscale16(QPainter& painter,
+                                          const QRect& canvas,
+                                          const QRectF& target) {
+    const QRect visible = target.toAlignedRect().intersected(canvas);
+    if (visible.isEmpty() || !image_ || !image_->preview.hasGrayscale16()) {
+        return;
+    }
+    if (mappedGrayscaleCache_.isNull() ||
+        mappedGrayscaleTarget_ != visible ||
+        mappedGrayscaleImageTarget_ != target ||
+        mappedGrayscaleImage_ != image_.get() ||
+        mappedGrayscaleMapping_ != displayMapping_) {
+        ensureGrayscaleDisplayLut();
+        mappedGrayscaleCache_ = QImage(
+            visible.size(), QImage::Format_Grayscale8);
+        const auto& source = image_->preview;
+        std::vector<int> sourceColumns(
+            static_cast<std::size_t>(visible.width()));
+        for (int outputX = 0; outputX < visible.width(); ++outputX) {
+            const double fraction =
+                (visible.left() + outputX + 0.5 - target.left()) /
+                target.width();
+            sourceColumns[static_cast<std::size_t>(outputX)] = std::clamp(
+                static_cast<int>(fraction * source.width),
+                0, source.width - 1);
+        }
+        for (int outputY = 0; outputY < visible.height(); ++outputY) {
+            const double fraction =
+                (visible.top() + outputY + 0.5 - target.top()) /
+                target.height();
+            const int sourceY = std::clamp(
+                static_cast<int>(fraction * source.height),
+                0, source.height - 1);
+            const auto* sourceRow = source.grayscale16Pixels +
+                static_cast<std::size_t>(sourceY) *
+                    source.grayscale16StrideSamples;
+            auto* outputRow = mappedGrayscaleCache_.scanLine(outputY);
+            for (int outputX = 0; outputX < visible.width(); ++outputX) {
+                outputRow[outputX] = grayscaleDisplayLut_[sourceRow[
+                    sourceColumns[static_cast<std::size_t>(outputX)]]];
+            }
+        }
+        mappedGrayscaleTarget_ = visible;
+        mappedGrayscaleImageTarget_ = target;
+        mappedGrayscaleImage_ = image_.get();
+        mappedGrayscaleMapping_ = displayMapping_;
+    }
+    painter.drawImage(visible.topLeft(), mappedGrayscaleCache_);
+}
+
+QImage ImageViewport::mappedGrayscaleOverview(const QSize& size) {
+    if (!image_ || !image_->preview.hasGrayscale16() || size.isEmpty()) {
+        return {};
+    }
+    ensureGrayscaleDisplayLut();
+    QImage result(size, QImage::Format_Grayscale8);
+    const auto& source = image_->preview;
+    for (int y = 0; y < size.height(); ++y) {
+        const int sourceY = std::min(
+            source.height - 1,
+            static_cast<int>(static_cast<long double>(y) /
+                size.height() * source.height));
+        const auto* sourceRow = source.grayscale16Pixels +
+            static_cast<std::size_t>(sourceY) *
+                source.grayscale16StrideSamples;
+        auto* outputRow = result.scanLine(y);
+        for (int x = 0; x < size.width(); ++x) {
+            const int sourceX = std::min(
+                source.width - 1,
+                static_cast<int>(static_cast<long double>(x) /
+                    size.width() * source.width));
+            outputRow[x] = grayscaleDisplayLut_[sourceRow[sourceX]];
+        }
+    }
+    return result;
 }
 
 void ImageViewport::drawOverview(QPainter& painter) {
@@ -326,7 +598,18 @@ void ImageViewport::drawOverview(QPainter& painter) {
     painter.fillRect(panel, QColor(15, 18, 23, 190));
     painter.setOpacity(0.78);
     painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
-    painter.drawImage(imageRect, preview_);
+    const bool directGrayscale = image_->preview.hasGrayscale16() &&
+        image_->preview.width ==
+            static_cast<int>(image_->metadata.width) &&
+        image_->preview.height ==
+            static_cast<int>(image_->metadata.height);
+    if (directGrayscale) {
+        painter.drawImage(
+            imageRect,
+            mappedGrayscaleOverview(overviewSize.toSize()));
+    } else {
+        painter.drawImage(imageRect, preview_);
+    }
     painter.setOpacity(1.0);
     painter.setPen(QPen(QColor(225, 231, 240, 190), 1.0));
     painter.drawRect(panel);
@@ -468,10 +751,14 @@ void ImageViewport::drawPixelOverlay(QPainter& painter) {
     QFont valueFont = painter.font();
     valueFont.setPixelSize(
         std::max(1, static_cast<int>(std::lround(zoom_ / 6.0))));
+    QFont rgbFont = painter.font();
+    rgbFont.setPixelSize(
+        std::max(1, static_cast<int>(std::lround(zoom_ / 10.0))));
     QFont patternFont = painter.font();
     patternFont.setPixelSize(
         std::max(1, static_cast<int>(std::lround(zoom_ / 7.0))));
     const double patternMargin = std::max(1.0, zoom_ / 28.0);
+    const double valueMargin = std::max(1.0, zoom_ / 28.0);
 
     if (overlayOptions_.showMesh) {
         for (qint64 y = top; y < bottom; ++y) {
@@ -490,7 +777,6 @@ void ImageViewport::drawPixelOverlay(QPainter& painter) {
     }
 
     if (overlayOptions_.enabled) {
-        painter.setFont(valueFont);
         for (const bool lightBackground : {false, true}) {
             painter.setPen(lightBackground ? QColor(Qt::black)
                                            : QColor(Qt::white));
@@ -498,22 +784,56 @@ void ImageViewport::drawPixelOverlay(QPainter& painter) {
                 for (qint64 x = left; x < right; ++x) {
                     auto* cached = cachedOverlayCell(x, y);
                     if (!cached || cached->lightBackground != lightBackground ||
-                        cached->valueText.text().isEmpty()) {
+                        (!cached->rgbValue &&
+                         cached->valueText.text().isEmpty())) {
                         continue;
                     }
-                    if (cached->preparedValueFontPixels != valueFont.pixelSize()) {
-                        cached->valueText.prepare(QTransform(), valueFont);
-                        cached->preparedValueFontPixels = valueFont.pixelSize();
+                    const QFont& overlayFont = cached->rgbValue
+                        ? rgbFont : valueFont;
+                    painter.setFont(overlayFont);
+                    if (cached->preparedValueFontPixels !=
+                        overlayFont.pixelSize()) {
+                        if (cached->rgbValue) {
+                            for (auto& line : cached->rgbTexts) {
+                                line.prepare(QTransform(), overlayFont);
+                            }
+                        } else {
+                            cached->valueText.prepare(QTransform(), overlayFont);
+                        }
+                        cached->preparedValueFontPixels = overlayFont.pixelSize();
                     }
                     const QRectF cell(offset_.x() + x * zoom_,
                                       offset_.y() + y * zoom_,
                                       zoom_,
                                       zoom_);
-                    const QSizeF textSize = cached->valueText.size();
-                    painter.drawStaticText(
-                        QPointF(cell.center().x() - textSize.width() / 2.0,
-                                cell.center().y() - textSize.height() / 2.0),
-                        cached->valueText);
+                    if (cached->rgbValue) {
+                        double totalHeight = 0.0;
+                        for (const auto& line : cached->rgbTexts) {
+                            totalHeight += line.size().height();
+                        }
+                        double textY = cell.bottom() - valueMargin - totalHeight;
+                        const std::array<QColor, 3> channelColors{
+                            lightBackground ? QColor(175, 0, 25)
+                                            : QColor(255, 95, 105),
+                            lightBackground ? QColor(0, 115, 35)
+                                            : QColor(105, 255, 120),
+                            lightBackground ? QColor(20, 55, 185)
+                                            : QColor(115, 155, 255)};
+                        for (std::size_t index = 0;
+                             index < cached->rgbTexts.size(); ++index) {
+                            const auto& line = cached->rgbTexts[index];
+                            painter.setPen(channelColors[index]);
+                            painter.drawStaticText(
+                                QPointF(cell.left() + valueMargin, textY), line);
+                            textY += line.size().height();
+                        }
+                    } else {
+                        const QSizeF textSize = cached->valueText.size();
+                        painter.drawStaticText(
+                            QPointF(cell.center().x() - textSize.width() / 2.0,
+                                    cell.center().y() - textSize.height() / 2.0),
+                            cached->valueText);
+                    }
                 }
             }
         }
@@ -617,8 +937,16 @@ ImageViewport::CachedOverlayCell ImageViewport::makeOverlayCell(
             static_cast<std::uint64_t>(x),
             static_cast<std::uint64_t>(y));
         if (info.valid && info.rgbValid) {
-            text = QStringLiteral("%1,%2,%3")
-                .arg(info.red).arg(info.green).arg(info.blue);
+            result.rgbValue = true;
+            result.rgbTexts[0].setText(
+                QStringLiteral("R %1").arg(info.red));
+            result.rgbTexts[1].setText(
+                QStringLiteral("G %1").arg(info.green));
+            result.rgbTexts[2].setText(
+                QStringLiteral("B %1").arg(info.blue));
+            for (auto& line : result.rgbTexts) {
+                line.setPerformanceHint(QStaticText::AggressiveCaching);
+            }
         } else if (info.valid) {
             text = QString::number(info.originalValue, 'g', 8);
         }
@@ -702,8 +1030,8 @@ void ImageViewport::updateNavigationGeometry() {
         canvas.left(), height() - scrollBarExtent,
         canvas.width(), scrollBarExtent);
     verticalScrollBar_->setGeometry(
-        canvas.right() + 1, rulerExtent,
-        scrollBarExtent, canvas.height() + rulerExtent);
+        canvas.right() + 1, canvas.top(),
+        scrollBarExtent, canvas.height());
     horizontalScrollBar_->raise();
     verticalScrollBar_->raise();
 }

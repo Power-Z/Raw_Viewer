@@ -4,6 +4,8 @@
 #include "application/demosaic.h"
 #include "application/document_session.h"
 #include "application/filter.h"
+#include "application/global_histogram.h"
+#include "application/image_transform.h"
 #include "application/open_image_service.h"
 #include "application/pixel_statistics.h"
 #include "application/recent_documents.h"
@@ -11,6 +13,7 @@
 #include <QMainWindow>
 
 #include <atomic>
+#include <array>
 #include <memory>
 #include <optional>
 
@@ -24,6 +27,7 @@ class QPushButton;
 class QAction;
 class QSpinBox;
 class QTimer;
+class QToolButton;
 class QTreeView;
 
 namespace rawviewer::presentation {
@@ -78,6 +82,12 @@ private:
     void beginDemosaic();
     void cancelDemosaic();
     void restoreDemosaicSource();
+    void beginImageTransform(application::ImageTransform transform);
+    void cancelImageTransform();
+    void beginGlobalHistogram();
+    void cancelGlobalHistogram();
+    void previewHistogramWindow(double blackPoint, double whitePoint);
+    void commitHistogramWindow();
     void beginBayerExtraction();
     void showOriginalImage();
     void exportBayerCsv();
@@ -85,6 +95,10 @@ private:
     void commitDisplayEdit();
     void syncDisplayControls();
     void renderCurrentDisplay(bool preserveView = true);
+    void refreshFromDocumentState(bool preserveView,
+                                  bool refreshStatistics = false);
+    void applyHistoryStep(bool redo);
+    void cancelPipelineTasks();
     void updateUndoActions();
     void syncToolAvailability();
 
@@ -94,11 +108,13 @@ private:
     application::BayerExtractService bayerExtractService_;
     application::DemosaicService demosaicService_;
     application::FilterService filterService_;
+    application::GlobalHistogramService globalHistogramService_;
+    application::ImageTransformService imageTransformService_;
     application::PixelStatisticsService pixelStatisticsService_;
     std::shared_ptr<const application::DecodedImage> currentImage_;
     std::shared_ptr<const application::DecodedImage> displaySource_;
     std::shared_ptr<const application::DecodedImage> preDemosaicSource_;
-    std::shared_ptr<application::BayerExtraction> bayerExtraction_;
+    std::shared_ptr<const application::BayerExtraction> bayerExtraction_;
     std::unique_ptr<application::DocumentSession> documentSession_;
     std::shared_ptr<std::atomic_bool> cancellation_;
     std::shared_ptr<std::atomic_bool> bayerCancellation_;
@@ -106,12 +122,17 @@ private:
     std::shared_ptr<std::atomic_bool> statisticsCancellation_;
     std::shared_ptr<std::atomic_bool> filterCancellation_;
     std::shared_ptr<std::atomic_bool> demosaicCancellation_;
+    std::shared_ptr<std::atomic_bool> imageTransformCancellation_;
+    std::shared_ptr<std::atomic_bool> globalHistogramCancellation_;
     std::shared_ptr<std::atomic_uint32_t> statisticsProgress_;
     std::uint64_t generation_ = 0;
     std::uint64_t bayerGeneration_ = 0;
     std::uint64_t statisticsGeneration_ = 0;
     std::uint64_t filterGeneration_ = 0;
     std::uint64_t demosaicGeneration_ = 0;
+    std::uint64_t imageTransformGeneration_ = 0;
+    std::uint64_t globalHistogramGeneration_ = 0;
+    std::shared_ptr<const application::DecodedImage> globalHistogramSource_;
     std::optional<application::StatisticsSelection> statisticsSelection_;
 
     ImageViewport* viewport_ = nullptr;
@@ -130,6 +151,7 @@ private:
     QDoubleSpinBox* blackPointSpin_ = nullptr;
     QDoubleSpinBox* whitePointSpin_ = nullptr;
     QDoubleSpinBox* gammaSpin_ = nullptr;
+    QToolButton* histogramZoomButton_ = nullptr;
     QPushButton* resetDisplayButton_ = nullptr;
     QPushButton* pixelInfoButton_ = nullptr;
     QPushButton* bayerExtractButton_ = nullptr;
@@ -138,6 +160,7 @@ private:
     QPushButton* demosaicButton_ = nullptr;
     QAction* undoAction_ = nullptr;
     QAction* redoAction_ = nullptr;
+    std::array<QAction*, 5> transformActions_{};
     QAction* pixelInfoAction_ = nullptr;
     QAction* bayerExtractAction_ = nullptr;
     QAction* statisticsAction_ = nullptr;
@@ -151,6 +174,7 @@ private:
     PixelStatisticsDialog* pixelStatisticsDialog_ = nullptr;
     QTimer* coordinateTimer_ = nullptr;
     QTimer* displayRenderTimer_ = nullptr;
+    QTimer* displayControlApplyTimer_ = nullptr;
     QLabel* coordinateLabel_ = nullptr;
     QLabel* imageLabel_ = nullptr;
     QLabel* zoomLabel_ = nullptr;

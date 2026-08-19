@@ -18,9 +18,9 @@ int main(int argc, char* argv[]) {
     QCoreApplication::setOrganizationName("Power-Z");
     QCoreApplication::setOrganizationDomain("github.com/Power-Z");
     QCoreApplication::setApplicationName("RawViewer");
-    QCoreApplication::setApplicationVersion("0.3.0-preview.3");
+    QCoreApplication::setApplicationVersion("0.3.0-preview.4");
     rawviewer::infrastructure::installLocalLogging();
-    qInfo("Raw Viewer 0.3.0-preview.3 starting");
+    qInfo("Raw Viewer 0.3.0-preview.4 starting");
 
     std::vector<std::shared_ptr<const rawviewer::application::IImageDecoder>>
         decoders;

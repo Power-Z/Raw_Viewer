@@ -10,6 +10,7 @@
 #include <QWidget>
 
 #include <memory>
+#include <array>
 #include <vector>
 
 class QLabel;
@@ -68,17 +69,26 @@ private:
         qint64 y = 0;
         domain::BayerChannel channel = domain::BayerChannel::None;
         bool lightBackground = false;
+        bool rgbValue = false;
         QStaticText valueText;
+        std::array<QStaticText, 3> rgbTexts;
         int preparedValueFontPixels = 0;
     };
 
     QPointF imageCoordinate(const QPointF& widgetPoint) const;
     QRect canvasRect() const;
     void publishCoordinate(const QPointF& widgetPoint);
+    void drawExactPixelLayer(QPainter& painter);
     void drawPixelOverlay(QPainter& painter);
     void drawStatisticsSelection(QPainter& painter);
     void drawRulers(QPainter& painter);
     void drawOverview(QPainter& painter);
+    void drawMappedGrayscale16(QPainter& painter,
+                               const QRect& canvas,
+                               const QRectF& target);
+    QImage mappedGrayscaleOverview(const QSize& size);
+    void ensureGrayscaleDisplayLut();
+    void invalidateMappedGrayscaleCache();
     QPoint boundedImagePixel(const QPointF& widgetPoint) const;
     void beginPan(const QPointF& position, Qt::MouseButton button);
     void finishPan();
@@ -87,6 +97,8 @@ private:
     void applyHorizontalScroll(int value);
     void applyVerticalScroll(int value);
     void invalidatePixelOverlayCache();
+    void invalidateExactPixelCache();
+    bool ensureExactPixelCache(const QRect& sourceRegion);
     void ensurePixelOverlayCache(qint64 left,
                                  qint64 top,
                                  qint64 right,
@@ -96,6 +108,16 @@ private:
 
     std::shared_ptr<const application::DecodedImage> image_;
     QImage preview_;
+    QImage exactPixelCache_;
+    QImage mappedGrayscaleCache_;
+    QRect mappedGrayscaleTarget_;
+    QRectF mappedGrayscaleImageTarget_;
+    const application::DecodedImage* mappedGrayscaleImage_ = nullptr;
+    domain::DisplayMapping mappedGrayscaleMapping_;
+    std::array<std::uint8_t, 65536> grayscaleDisplayLut_{};
+    domain::DisplayMapping grayscaleDisplayLutMapping_;
+    bool grayscaleDisplayLutValid_ = false;
+    QRect exactPixelCacheRegion_;
     QWidget* loadingOverlay_ = nullptr;
     QLabel* loadingLabel_ = nullptr;
     QProgressBar* loadingProgress_ = nullptr;
@@ -108,6 +130,8 @@ private:
     PixelOverlayOptions overlayOptions_;
     std::vector<CachedOverlayCell> overlayCellCache_;
     const application::DecodedImage* overlayCacheImage_ = nullptr;
+    const application::DecodedImage* exactPixelCacheImage_ = nullptr;
+    domain::DisplayMapping exactPixelCacheMapping_;
     domain::DisplayMapping overlayCacheMapping_;
     qint64 overlayCacheLeft_ = 0;
     qint64 overlayCacheTop_ = 0;

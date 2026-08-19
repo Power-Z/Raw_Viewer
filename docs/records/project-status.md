@@ -1,7 +1,7 @@
 # 项目状态
 
 - 当前版本阶段：V0.3 非破坏处理与基础分析（实施中）
-- 状态日期：2026-08-19
+- 状态日期：2026-08-20
 - 默认分支：`main`
 
 ## 已完成
@@ -43,6 +43,12 @@
 - 完成 V0.7.6 视口综合导航：中键平移、上下像素标尺、固定全图缩略导航、底部/右侧同步滚动条和默认关闭 Bayer pattern；
 - 完成 V0.7.7 Filter：当前显示 RAW 的 Mean/Gaussian/Median、3/5/7 kernel 专业紧凑子窗口，以及 1024 预览、可分离卷积、滑动中位数和有界惰性瓦片优化；
 - 完成 V0.7.8 Bayer Demosaic：Bilinear、Malvar-He-Cutler、Hamilton-Adams，当前规则 Bayer 输入、专业紧凑子窗口、输入恢复和有界惰性 RGB 管线；
+- 完成 V0.7.13 全图通道直方图：Bayer R/Gr/Gb/B、RGB R/G/B/Y、单通道自动模式，以及 BLV/WLV 一位小数、共轴双手柄和区间放大精调；
+- 完成 V0.7.14 全图统计性能优化：连续内存扫描、UInt16 直接 bin、曲线投影缓存、BLV/WLV 松手应用与输入防抖，并将 RAW 默认 Gamma 改为 1.0；
+- 完成 V0.7.9 综合优化：顶部/左侧主题标尺、Extract 当前输出坐标语义，以及高倍率下有界精确像素缓存；
+- 完成 V0.7.10 像素标注优化：RGB 三行左下角布局、连续换图坐标/交互状态重置，以及 Pixel Info 4×4 RGGB 实时预览；
+- 完成 V0.7.11 像素统计优化：紧凑直角统计窗口、40% 放大指标标题、纯黑细图线、固定灰色绘图区、O(log n) 悬停引导和 60% RGB 通道色标注；
+- 完成 V0.7.12 编辑与全局撤销：五种快捷几何编辑、惰性有界预览，以及覆盖显示参数/Extract/Filter/Demosaic 的每文档五步历史和统一模块刷新；
 - 单通道使用只读 2×2 像素源视图，不复制四分之一幅完整通道数据。
 - 完成 P2-05 Pixel Statistics：Status、Horizontal Box、Vertical Box、Line、WB 预留、两次点击选择、Bayer 分通道、后台进度/取消和有界图表。
 
@@ -116,7 +122,14 @@ V0.3：完成像素信息、Bayer 提取、ROI 基础统计与双图对比闭环
 | 2026-08-19 | V0.7.5 提取结果像素标注 | 连续 original→R、original→Gr 提取验证第二次值为 1/3/21/23，主窗口端到端确认 `(0,0) → Source (1,0) / Raw 1`；紧凑结果按源坐标恢复 Gr mesh/pattern；Debug/Release CTest 均 4/4 |
 | 2026-08-19 | V0.7.6 视口综合导航 | 统计工具激活时中键平移不触发选择；上下标尺坐标 5 与同一像素边界对齐；缩略视野框随缩放变小，底部/右侧滚动条与源坐标同步；Bayer pattern 默认关闭；Debug/Release CTest 均 4/4 |
 | 2026-08-19 | V0.7.7 Filter | Mean/Gaussian/Median 黄金值、当前显示链、取消/非法参数、1024 预览和宽图瓦片行复用通过；10×10→5×5 Bayer Extract 后 Mean 输出角点 7.333…；Debug/Release CTest 均 4/4 |
-| 2026-08-19 | V0.7.8 Bayer Demosaic | 四种 Bayer 排列×三算法常量黄金值、三种脉冲系数、1024 预览、双瓦片 9,800 次读取和恢复输入通过；Mean Filter→Bilinear 端到端 RGB 37,51,61；Debug/Release CTest 均 4/4 |
+| 2026-08-19 | V0.7.8 Bayer Demosaic | 四种 Bayer 排列×三算法常量黄金值、三种脉冲系数、1024 预览、双瓦片 9,800 次读取和恢复输入通过；Mean Filter→Bilinear 端到端旧 Gamma=2.2 黄金值 RGB 37,51,61（V0.7.14 线性默认更新为 4,7,11）；Debug/Release CTest 均 4/4 |
+| 2026-08-19 | V0.7.9 综合优化 | 200×200 RAW 的 2×2 左上单点提取严格输出 100×100，末像素映射到源 `(198,198)`；状态栏只显示当前输出坐标；顶部/左侧主题标尺和高倍率精确像素缓存 UI 测试通过；Debug/Release CTest 均 4/4 |
+| 2026-08-20 | V0.7.10 像素标注优化 | RGB 的 R/G/B 三个独立静态文本在左下角离屏布局通过；未释放左键拖拽后切换到不同尺寸图，立即发布无效坐标并在中心返回新图 `(5,5)`；4×4 RGGB 示例对三项开关均产生实时视觉变化；Debug/Release CTest 均 4/4 |
+| 2026-08-20 | V0.7.11 像素统计优化 | MODE/ANALYSIS/PLOT 和重复状态标签移除、Mode/Analysis 紧凑高度及 14 px 指标标题通过；深色调色板下 RGB(207,207,207) 绘图区、纯黑数据线和悬停横纵引导通过；RGB 60% 字号与三通道颜色通过；Debug/Release CTest 均 4/4 |
+| 2026-08-20 | V0.7.12 编辑与全局撤销 | 3×2 五变换黄金矩阵、Bayer pattern、双 Mirror、4096×3072→768×1024 有界预览和取消通过；混合管线/显示参数五步历史与活动编辑撤销通过；UI 快捷键、Raw 0↔2、3×2↔2×3，以及 Filter 统计 7.3333 撤回后自动刷新 0.0000 通过；Debug/Release CTest 均 4/4 |
+| 2026-08-20 | V0.7.13 全图直方图与 Display Window | Bayer/RGB/单通道三模式、通道 bin 总数、取消、R/Gr/Gb/B 离屏颜色、BLV/WLV 双手柄、一位小数输入及窗口放大端到端测试通过；Debug/Release CTest 均 4/4 |
+| 2026-08-20 | V0.7.14 全图统计与 Display Window 性能 | Grayscale16 全图统计零虚函数读取、65,536-bin 投影拖动复用、12 次拖动事件松手前后历史边界、BLV/WLV 黑白阈值和默认 Gamma=1 通过；Debug/Release CTest 均 4/4 |
 | 2026-08-16 | `v0.3.0-preview.1` 发布 | Windows x64 便携包包含 Qt 6.8.3、LibRaw 0.22.2、MSVC CRT、许可证与 SHA-256；包内依赖加载和启动冒烟测试通过，以 GitHub prerelease 发布 |
 | 2026-08-18 | `v0.3.0-preview.2` 发布 | 汇总 Recent Files、V0.4～V0.7.1；Debug/Release 4/4，便携包包含完整运行库、用户指南、Release Notes 和 SHA-256，以 GitHub prerelease 发布 |
 | 2026-08-19 | `v0.3.0-preview.3` 发布 | 汇总 V0.7.2～V0.7.8；Debug/Release 4/4，上传完整便携 ZIP、SHA-256 和同构建 RawViewer.exe，以 GitHub prerelease 发布 |
+| 2026-08-20 | `v0.3.0-preview.4` 发布 | 汇总 V0.7.9～V0.7.14；Debug/Release 4/4，上传完整便携 ZIP、SHA-256 和同构建 RawViewer.exe，以 GitHub prerelease 发布 |

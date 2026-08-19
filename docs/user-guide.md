@@ -1,14 +1,14 @@
 # Raw Viewer 用户指南
 
-适用版本：`v0.3.0-preview.3`，Windows 10/11 x64。
+适用版本：`v0.3.0-preview.4`，Windows 10/11 x64。
 
 ## 1. 获取与运行
 
-1. 从 [GitHub Releases](https://github.com/Power-Z/Raw_Viewer/releases) 下载 `RawViewer-v0.3.0-preview.3-windows-x64.zip` 及同名 `.sha256` 文件。
+1. 从 [GitHub Releases](https://github.com/Power-Z/Raw_Viewer/releases) 下载 `RawViewer-v0.3.0-preview.4-windows-x64.zip` 及同名 `.sha256` 文件。
 2. 在 PowerShell 中校验：
 
    ```powershell
-   Get-FileHash .\RawViewer-v0.3.0-preview.3-windows-x64.zip -Algorithm SHA256
+   Get-FileHash .\RawViewer-v0.3.0-preview.4-windows-x64.zip -Algorithm SHA256
    ```
 
    输出应与 `.sha256` 文件一致。
@@ -64,23 +64,41 @@ TIFF/DNG/厂商 RAW 先按内容签名识别，再由 LibRaw 读取尺寸、数�
 - 左键拖拽：未启用区域选择工具时平移图像；
 - 中键拖拽：始终平移图像，Pixel Statistics 等工具占用左键时也可使用；
 - 鼠标滚轮：以鼠标位置为锚点缩放；
-- 顶部和底部标尺：显示与源像素边界严格对齐的水平坐标；
+- 顶部和左侧标尺：分别显示与当前图像像素边界严格对齐的 X/Y 坐标，颜色跟随当前主题；
 - 右上角缩略图：固定显示完整图像，橙色矩形表示当前可见区域；
 - 底部和右侧滚动条：图像超出显示区域时启用，可拖动到其他位置；
 - 打开新图时：自动适合窗口；
 - 状态栏：显示坐标、Raw/Display/RGB 信息、Bayer 通道和缩放比例。
 
-右侧显示参数提供 Sensor BLV、Display BLV、Display WLV、Gamma 和恢复默认值。修改只影响显示映射，原始文件与原始像素源保持只读。Undo/Redo 为每个文档分别保存最多五步逻辑操作。
+右上角直方图读取当前显示源的全分辨率像素：规则 Bayer RAW 自动叠加 R/Gr/Gb/B 四条曲线，RGB 自动显示 R/G/B/Y，非规则 Bayer 提取或单通道 RAW 显示一条灰度曲线。统计在后台执行，切换图像会取消旧任务；修改显示参数不会重复扫描全图。
+
+Display BLV 和 Display WLV 保留一位小数，右侧输入框与直方图横轴上的蓝色/白色双手柄双向同步。拖动期间只预览手柄和数字，松开后才一次刷新图像并形成一个撤销步骤；输入框在停止输入约 120 ms 或失焦后应用。点击 `🔍 BLV–WLV` 会以当前两点为横轴范围进入 `WINDOW DETAIL` 精调，再次点击恢复完整范围。RAW 默认 Gamma 为 1.0：小于等于 BLV 为全黑，大于等于 WLV 为全白，中间值线性显示；修改 Gamma 后按对应幂函数显示。这些操作只影响显示映射，原始文件与原始像素源保持只读。
+
+### 编辑和全局撤销
+
+`编辑` 菜单提供以下几何操作：
+
+- `Flip`（上下翻转）：`Ctrl+Alt+V`；
+- `Mirror`（左右翻转）：`Ctrl+Alt+H`；
+- `Rotate Left`：`Ctrl+Alt+Left`；
+- `Rotate Right`：`Ctrl+Alt+Right`；
+- `Rotate 180`：`Ctrl+Alt+Down`。
+
+Undo/Redo 使用标准 `Ctrl+Z` / `Ctrl+Y`，每个文档保存最近五个逻辑编辑步骤。历史覆盖 Display BLV/WLV/Gamma、恢复显示默认值、上述几何操作、Bayer Extract/Show Original、Filter 和 Demosaic/Restore Source。撤销后会同步刷新视口、直方图、像素坐标、工具状态；统计窗口可见且 ROI 仍有效时会自动基于恢复后的图像重新计算。
+
+平移、缩放、统计选区、主题、工具偏好和 CSV 导出不修改图像处理管线，因此不占用五步历史。打开新文件会创建该文档自己的空历史。
 
 ## 5. Pixel Info
 
 像素值标注在应用启动后默认启用，不需要先打开 Pixel Info 窗口；Bayer mesh 和 Bayer pattern 默认关闭。Pixel Info 仅包含三个选项：
 
-1. `像素值标注`：RAW 自动显示原始值，普通 RGB 图自动显示 `R,G,B`；
+1. `像素值标注`：RAW 自动显示原始值，普通图片和 Demosaic/ISP RGB 输出显示三行 `R n`、`G n`、`B n`；
 2. `Bayer mesh`：根据 Bayer pattern 添加半透明 R、Gr、Gb、B 遮罩，Gr/Gb 使用不同绿色；
 3. `Bayer pattern`：在每个像素右下角显示 `R/Gr/Gb/B`；四种通道使用不同字体颜色，Gr/Gb 分别使用亮绿和青绿色系。
 
-单个源像素显示高度达到 40 px 后自动出现叠加层。数值位于像素中央，字高约为像素高度的 1/6；Pattern 位于右下角，字高约为 1/7。数值根据当前显示灰度自动选择黑字或白字，Pattern 颜色也会按背景明暗选择深色或亮色变体。达到阈值后所有可见像素都会标注，并随拖拽和缩放逐帧移动。程序只缓存当前可见区域附近的标签数据，不会为整幅 RAW 建立副本。
+单个源像素显示高度达到 40 px 后自动出现叠加层。RAW 数值位于像素中央；JPG/PNG/BMP 和 Demosaic 等 RGB 图像的三行数值位于像素左下角。数值字高约为像素高度的 1/6；Pattern 位于右下角，字高约为 1/7。数值根据当前显示灰度自动选择黑字或白字，Pattern 颜色也会按背景明暗选择深色或亮色变体。达到阈值后所有可见像素都会标注，并随拖拽和缩放逐帧移动。连续打开另一张图时会同步清除旧图拖拽锚点、选择、缩放、偏移和坐标状态。程序只缓存当前可见区域附近的标签数据，不会为整幅图建立副本。
+
+Pixel Info 子窗口右侧提供 4×4 RGGB 示例。切换像素值、Bayer mesh 或 Bayer pattern 时示例会立即更新，可在应用到大图前确认组合效果；窗口使用普通直角区域，不使用圆角卡片。
 
 ## 6. Bayer Extract
 
@@ -101,7 +119,7 @@ Bayer Extract 从当前文档的原始全图中周期性提取指定 pattern 位
 - `Column-major`：选中位置按从上到下、再从左到右排列；
 - `?` 按钮显示说明。
 
-源宽高不是 pattern 整数倍时，Extract 前会确认是否处理右侧/底部的部分单元。全选所有位置属于恒等操作，结果严格等于原图并复用原始只读数据；非全选使用最长边 1024 的有界信号预览，像素查询仍返回准确原始坐标和值。
+源宽高不是 pattern 整数倍时，Extract 前会确认是否处理右侧/底部的部分单元。全选所有位置属于恒等操作，结果严格等于原图并复用原始只读数据；非全选使用最长边 1024 的有界信号预览。提取结果是独立的紧凑坐标空间：例如 200×200 图像按 2×2 只保留左上位置时，结果及状态栏坐标均为 100×100，不显示原图坐标。放大到 16 px/像素后，视口会对可见区域使用最多 65,536 样本的精确缓存，使背景像素与数值标注严格一致，同时限制绘制线程负载。
 
 ## 7. Pixel Statistics
 
@@ -118,6 +136,8 @@ Bayer Extract 从当前文档的原始全图中周期性提取指定 pattern 位
 `Bayer channels` 默认关闭，此时显示一个 All 结果。规则 Bayer 排列下可勾选该项，底部会切换为 R/Gr/Gb/B 四个独立结果面板；四通道计算只扫描 ROI 一次。非恒等 Bayer Extract 会改变排列，此时该选项不可用，避免按重新排列后的坐标错误推断 Bayer 通道。
 
 图表参数位于主菜单 `偏好 → Pixel Statistics…`，包括 Line width、Histogram bins、Data points、Grid 和 Histogram fill。默认线宽为 1 px，设置会在下次启动时保留。
+
+统计窗口采用直角紧凑布局，模式、指标和图表区不再重复显示英文区段标题；计算状态只显示在进度条内部。图表的数据线在任意主题下均为纯黑色，X/Y 轴围成的绘图区固定为 RGB(207,207,207)。鼠标移动到距曲线或直方图顶部约 14 px 内时，会自动吸附最近数据点并显示连接 X/Y 轴的横纵引导线。
 
 ## 8. Filter
 

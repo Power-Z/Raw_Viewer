@@ -2,6 +2,8 @@
 #include "application/demosaic.h"
 #include "application/document_session.h"
 #include "application/filter.h"
+#include "application/global_histogram.h"
+#include "application/image_transform.h"
 #include "application/pixel_info.h"
 #include "application/pixel_statistics.h"
 #include "application/preview_renderer.h"
@@ -79,6 +81,23 @@ private:
     std::uint64_t width_ = 0;
     std::uint64_t height_ = 0;
     std::vector<double> values_;
+};
+
+class RgbPixelSource final : public rawviewer::application::IPixelSource {
+public:
+    std::uint64_t width() const noexcept override { return 2; }
+    std::uint64_t height() const noexcept override { return 1; }
+
+    rawviewer::application::PixelSample sample(
+        std::uint64_t x,
+        std::uint64_t y) const noexcept override {
+        if (y != 0 || x >= 2) return {};
+        return x == 0
+            ? rawviewer::application::PixelSample{
+                  true, 85.0, true, 255, 0, 0}
+            : rawviewer::application::PixelSample{
+                  true, 85.0, true, 0, 255, 0};
+    }
 };
 
 std::shared_ptr<rawviewer::application::DecodedImage> makeImage() {
@@ -162,12 +181,19 @@ class DocumentSessionTest final : public QObject {
 private slots:
     void keepsOnlyFiveUndoOperations();
     void clearsRedoAfterNewEdit();
+    void undoesAnActiveDisplayEditImmediately();
+    void serializesPipelineCompletionAfterActiveDisplayEdit();
+    void defaultsRawDisplayToLinearGamma();
     void isolatesDocumentHistory();
+    void restoresPipelineAndDisplayStateFromGlobalHistory();
+    void transformsPixelsBayerPhaseAndBoundedPreview();
+    void calculatesThreeGlobalHistogramModesAndCancellation();
     void rendersWithoutChangingOriginal();
     void preservesDirectGray16WithoutRgbRendering();
     void queriesOriginalProcessedRgbAndBayerValues();
     void rejectsOutOfBoundsPixelInfo();
     void keepsPixelInfoOnLatestIndependentExtraction();
+    void extractsSinglePositionToDenseOutputCoordinates();
     void extractsChannelsFromOddSizedImage();
     void packsArbitraryMaskByRowsAndColumns();
     void extractsStandardQuadHexAndSpecialPatternPositions();
@@ -214,6 +240,58 @@ void DocumentSessionTest::clearsRedoAfterNewEdit() {
     QVERIFY(!session.canRedo());
 }
 
+void DocumentSessionTest::undoesAnActiveDisplayEditImmediately() {
+    rawviewer::application::DocumentSession session(makeImage());
+    auto mapping = session.displayMapping();
+    mapping.blackPoint = 7.0;
+    QVERIFY(session.updateDisplayMapping(mapping).valid);
+    QVERIFY(session.canUndo());
+    QVERIFY(!session.canRedo());
+    QVERIFY(session.undo());
+    QCOMPARE(session.displayMapping().blackPoint, 0.0);
+    QVERIFY(session.canRedo());
+    QVERIFY(session.redo());
+    QCOMPARE(session.displayMapping().blackPoint, 7.0);
+    QCOMPARE(session.undoCount(), std::size_t{1});
+}
+
+void DocumentSessionTest::serializesPipelineCompletionAfterActiveDisplayEdit() {
+    const auto original = makeImage();
+    const auto processed = makeImage();
+    rawviewer::application::DocumentSession session(original);
+    auto mapping = session.displayMapping();
+    mapping.blackPoint = 7.0;
+    QVERIFY(session.updateDisplayMapping(mapping).valid);
+
+    QVERIFY(session.commitPipelineEdit(processed));
+    QCOMPARE(session.undoCount(), std::size_t{2});
+    QCOMPARE(session.displaySource().get(), processed.get());
+    QCOMPARE(session.displayMapping().blackPoint, 7.0);
+
+    QVERIFY(session.undo());
+    QCOMPARE(session.displaySource().get(), original.get());
+    QCOMPARE(session.displayMapping().blackPoint, 7.0);
+    QVERIFY(session.undo());
+    QCOMPARE(session.displayMapping().blackPoint, 0.0);
+    QVERIFY(session.redo());
+    QVERIFY(session.redo());
+    QCOMPARE(session.displaySource().get(), processed.get());
+}
+
+void DocumentSessionTest::defaultsRawDisplayToLinearGamma() {
+    rawviewer::application::DocumentSession session(makeBayerImage(2, 2));
+    QCOMPARE(session.displayMapping().gamma, 1.0);
+    rawviewer::domain::DisplayMapping mapping;
+    mapping.blackPoint = 10.0;
+    mapping.whitePoint = 110.0;
+    mapping.gamma = 1.0;
+    QCOMPARE(rawviewer::domain::mapDisplayValue(0.0, mapping), 0.0);
+    QCOMPARE(rawviewer::domain::mapDisplayValue(10.0, mapping), 0.0);
+    QCOMPARE(rawviewer::domain::mapDisplayValue(60.0, mapping), 0.5);
+    QCOMPARE(rawviewer::domain::mapDisplayValue(110.0, mapping), 1.0);
+    QCOMPARE(rawviewer::domain::mapDisplayValue(200.0, mapping), 1.0);
+}
+
 void DocumentSessionTest::isolatesDocumentHistory() {
     rawviewer::application::DocumentSession first(makeImage());
     rawviewer::application::DocumentSession second(makeImage());
@@ -221,6 +299,202 @@ void DocumentSessionTest::isolatesDocumentHistory() {
     QVERIFY(first.canUndo());
     QVERIFY(!second.canUndo());
     QCOMPARE(second.displayMapping().blackPoint, 0.0);
+}
+
+void DocumentSessionTest::restoresPipelineAndDisplayStateFromGlobalHistory() {
+    const auto original = makeBayerImage(4, 3);
+    rawviewer::application::DocumentSession session(original);
+    rawviewer::application::ImageTransformService transformService;
+
+    auto mirror = transformService.execute(
+        {original,
+         rawviewer::application::ImageTransform::MirrorHorizontal,
+         {}});
+    QVERIFY2(mirror.succeeded(), mirror.message.c_str());
+    auto extraction = std::make_shared<
+        rawviewer::application::BayerExtraction>();
+    extraction->image = mirror.image;
+    QVERIFY(session.commitPipelineEdit(mirror.image, {}, extraction));
+
+    auto rotate = transformService.execute(
+        {mirror.image,
+         rawviewer::application::ImageTransform::RotateRight,
+         {}});
+    QVERIFY2(rotate.succeeded(), rotate.message.c_str());
+    QVERIFY(session.commitPipelineEdit(
+        rotate.image, mirror.image, extraction));
+    commitBlackPoint(session, 5.0);
+    QCOMPARE(session.undoCount(), std::size_t{3});
+    QCOMPARE(session.displaySource().get(), rotate.image.get());
+    QCOMPARE(session.preDemosaicSource().get(), mirror.image.get());
+    QCOMPARE(session.bayerExtraction().get(), extraction.get());
+
+    QVERIFY(session.undo());
+    QCOMPARE(session.displayMapping().blackPoint, 0.0);
+    QCOMPARE(session.displaySource().get(), rotate.image.get());
+    QVERIFY(session.undo());
+    QCOMPARE(session.displaySource().get(), mirror.image.get());
+    QVERIFY(!session.preDemosaicSource());
+    QCOMPARE(session.bayerExtraction().get(), extraction.get());
+    QVERIFY(session.undo());
+    QCOMPARE(session.displaySource().get(), original.get());
+    QVERIFY(!session.bayerExtraction());
+
+    QVERIFY(session.redo());
+    QCOMPARE(session.displaySource().get(), mirror.image.get());
+    commitBlackPoint(session, 2.0);
+    QVERIFY(!session.canRedo());
+}
+
+void DocumentSessionTest::transformsPixelsBayerPhaseAndBoundedPreview() {
+    using rawviewer::application::ImageTransform;
+    rawviewer::application::ImageTransformService service;
+    const auto source = makeBayerImage(3, 2);
+
+    struct Golden {
+        ImageTransform transform;
+        std::uint64_t width;
+        std::uint64_t height;
+        std::vector<double> values;
+    };
+    const std::array cases{
+        Golden{ImageTransform::FlipVertical, 3, 2,
+               {10, 11, 12, 0, 1, 2}},
+        Golden{ImageTransform::MirrorHorizontal, 3, 2,
+               {2, 1, 0, 12, 11, 10}},
+        Golden{ImageTransform::RotateLeft, 2, 3,
+               {2, 12, 1, 11, 0, 10}},
+        Golden{ImageTransform::RotateRight, 2, 3,
+               {10, 0, 11, 1, 12, 2}},
+        Golden{ImageTransform::Rotate180, 3, 2,
+               {12, 11, 10, 2, 1, 0}}};
+    for (const auto& golden : cases) {
+        const auto result = service.execute({source, golden.transform, {}});
+        QVERIFY2(result.succeeded(), result.message.c_str());
+        QCOMPARE(result.image->metadata.width, golden.width);
+        QCOMPARE(result.image->metadata.height, golden.height);
+        QCOMPARE(result.image->pixels->width(), golden.width);
+        QCOMPARE(result.image->pixels->height(), golden.height);
+        for (std::uint64_t y = 0; y < golden.height; ++y) {
+            for (std::uint64_t x = 0; x < golden.width; ++x) {
+                const auto index = static_cast<std::size_t>(
+                    y * golden.width + x);
+                QCOMPARE(result.image->pixels->sample(x, y).value,
+                         golden.values[index]);
+                const auto actual =
+                    result.image->pixels->bayerChannel(x, y);
+                const auto expected = rawviewer::domain::bayerChannelAt(
+                    result.image->metadata.bayerPattern, x, y);
+                const auto green = [](rawviewer::domain::BayerChannel channel) {
+                    return channel == rawviewer::domain::BayerChannel::Gr ||
+                        channel == rawviewer::domain::BayerChannel::Gb;
+                };
+                QVERIFY(actual == expected ||
+                        (green(actual) && green(expected)));
+            }
+        }
+    }
+
+    const auto first = service.execute(
+        {source, ImageTransform::MirrorHorizontal, {}});
+    const auto second = service.execute(
+        {first.image, ImageTransform::MirrorHorizontal, {}});
+    QVERIFY(first.succeeded());
+    QVERIFY(second.succeeded());
+    for (std::uint64_t y = 0; y < 2; ++y) {
+        for (std::uint64_t x = 0; x < 3; ++x) {
+            QCOMPARE(second.image->pixels->sample(x, y).value,
+                     source->pixels->sample(x, y).value);
+        }
+    }
+
+    auto large = makeBayerImage(4096, 3072);
+    const auto bounded = service.execute(
+        {large, ImageTransform::RotateRight, {}});
+    QVERIFY2(bounded.succeeded(), bounded.message.c_str());
+    QVERIFY(bounded.image->signalPreview);
+    QCOMPARE(bounded.image->signalPreview->width, 768);
+    QCOMPARE(bounded.image->signalPreview->height, 1024);
+    QVERIFY(!bounded.image->signalPreview->preservesBayerPhase);
+    QCOMPARE(bounded.image->signalPreview->values.size(),
+             std::size_t{768 * 1024});
+
+    auto cancellation = std::make_shared<std::atomic_bool>(true);
+    const auto cancelled = service.execute(
+        {source, ImageTransform::Rotate180, cancellation});
+    QVERIFY(!cancelled.succeeded());
+    QCOMPARE(QString::fromStdString(cancelled.errorCode),
+             QStringLiteral("task.cancelled"));
+}
+
+void DocumentSessionTest::calculatesThreeGlobalHistogramModesAndCancellation() {
+    using rawviewer::application::GlobalHistogramMode;
+    rawviewer::application::GlobalHistogramService service;
+
+    auto bayer = service.execute({makeBayerImage(2, 2), 64, {}, {}});
+    QVERIFY2(bayer.succeeded(), bayer.message.c_str());
+    QCOMPARE(bayer.mode, GlobalHistogramMode::BayerChannels);
+    QCOMPARE(bayer.series.size(), std::size_t{4});
+    for (const auto& series : bayer.series) {
+        QCOMPARE(series.sampleCount, std::uint64_t{1});
+        QCOMPARE(std::accumulate(series.bins.begin(), series.bins.end(),
+                                 std::uint64_t{0}),
+                 std::uint64_t{1});
+    }
+
+    auto directImage = makeBayerImage(4, 4);
+    auto directSource = std::dynamic_pointer_cast<const GridPixelSource>(
+        directImage->pixels);
+    auto directPixels = std::make_shared<std::vector<std::uint16_t>>(16);
+    std::iota(directPixels->begin(), directPixels->end(), std::uint16_t{0});
+    directImage->preview.width = 4;
+    directImage->preview.height = 4;
+    directImage->preview.grayscale16Storage = directPixels;
+    directImage->preview.grayscale16Pixels = directPixels->data();
+    directImage->preview.grayscale16StrideSamples = 4;
+    auto direct = service.execute({directImage, 65536, {}, {}});
+    QVERIFY2(direct.succeeded(), direct.message.c_str());
+    QCOMPARE(directSource->sampleCalls, std::uint64_t{0});
+    QCOMPARE(direct.series[0].bins[0], std::uint64_t{1});
+    QCOMPARE(direct.series[3].bins[5], std::uint64_t{1});
+
+    auto mono = service.execute({makeImage(), 64, {}, {}});
+    QVERIFY2(mono.succeeded(), mono.message.c_str());
+    QCOMPARE(mono.mode, GlobalHistogramMode::SingleChannel);
+    QCOMPARE(mono.series.size(), std::size_t{1});
+    QCOMPARE(mono.series.front().sampleCount, std::uint64_t{3});
+
+    rawviewer::application::BayerExtractRequest extractRequest;
+    extractRequest.source = makeBayerImage(4, 4);
+    extractRequest.mask = {"R only", 2, 2, {1, 0, 0, 0}};
+    auto extracted = rawviewer::application::BayerExtractService().execute(
+        extractRequest);
+    QVERIFY2(extracted.succeeded(), extracted.message.c_str());
+    auto singleBayer = service.execute(
+        {extracted.extraction->image, 64, {}, {}});
+    QVERIFY2(singleBayer.succeeded(), singleBayer.message.c_str());
+    QCOMPARE(singleBayer.mode, GlobalHistogramMode::SingleChannel);
+    QCOMPARE(singleBayer.series.front().component,
+             rawviewer::application::GlobalHistogramComponent::Red);
+
+    auto rgbImage = std::make_shared<rawviewer::application::DecodedImage>();
+    rgbImage->metadata.kind = rawviewer::application::ImageKind::Standard;
+    rgbImage->metadata.scalarType = rawviewer::domain::ScalarType::UInt8;
+    rgbImage->metadata.width = 2;
+    rgbImage->metadata.height = 1;
+    rgbImage->pixels = std::make_shared<RgbPixelSource>();
+    auto rgb = service.execute({rgbImage, 64, {}, {}});
+    QVERIFY2(rgb.succeeded(), rgb.message.c_str());
+    QCOMPARE(rgb.mode, GlobalHistogramMode::RgbLuminance);
+    QCOMPARE(rgb.series.size(), std::size_t{4});
+    for (const auto& series : rgb.series) {
+        QCOMPARE(series.sampleCount, std::uint64_t{2});
+    }
+    QCOMPARE(rgb.series[2].bins.front(), std::uint64_t{2});
+
+    auto token = std::make_shared<std::atomic_bool>(true);
+    auto cancelled = service.execute({makeImage(), 64, token, {}});
+    QCOMPARE(cancelled.errorCode, std::string("task.cancelled"));
 }
 
 void DocumentSessionTest::rendersWithoutChangingOriginal() {
@@ -321,6 +595,30 @@ void DocumentSessionTest::keepsPixelInfoOnLatestIndependentExtraction() {
     QCOMPARE(info.channel, rawviewer::domain::BayerChannel::Gr);
     QCOMPARE(second.extraction->image->pixels->bayerChannel(0, 0),
              rawviewer::domain::BayerChannel::Gr);
+}
+
+void DocumentSessionTest::extractsSinglePositionToDenseOutputCoordinates() {
+    rawviewer::application::BayerExtractRequest request;
+    request.source = makeBayerImage(200, 200);
+    request.mask = {"top-left", 2, 2, {1, 0, 0, 0}};
+
+    const auto result =
+        rawviewer::application::BayerExtractService().execute(request);
+    QVERIFY2(result.succeeded(), result.message.c_str());
+    const auto& extraction = *result.extraction;
+    QCOMPARE(extraction.geometry.width, std::uint64_t{100});
+    QCOMPARE(extraction.geometry.height, std::uint64_t{100});
+    QCOMPARE(extraction.image->metadata.width, std::uint64_t{100});
+    QCOMPARE(extraction.image->metadata.height, std::uint64_t{100});
+    QCOMPARE(extraction.image->pixels->width(), std::uint64_t{100});
+    QCOMPARE(extraction.image->pixels->height(), std::uint64_t{100});
+    QCOMPARE(extraction.image->signalPreview->width, 100);
+    QCOMPARE(extraction.image->signalPreview->height, 100);
+    QCOMPARE(extraction.image->pixels->sample(0, 0).value, 0.0);
+    QCOMPARE(extraction.image->pixels->sample(99, 99).value, 2178.0);
+    const std::optional<rawviewer::domain::BayerCoordinate> source198{
+        rawviewer::domain::BayerCoordinate{198, 198}};
+    QCOMPARE(extraction.geometry.sourceCoordinate(99, 99), source198);
 }
 
 void DocumentSessionTest::extractsChannelsFromOddSizedImage() {

@@ -14,6 +14,7 @@ class QCloseEvent;
 class QLabel;
 class QProgressBar;
 class QPushButton;
+class QShowEvent;
 class QStackedWidget;
 class QTimer;
 
@@ -42,6 +43,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent* event) override;
+    void showEvent(QShowEvent* event) override;
     void reject() override;
 
 signals:
@@ -60,7 +62,6 @@ private:
     QButtonGroup* modeGroup_ = nullptr;
     QCheckBox* channelsCheck_ = nullptr;
     QLabel* selectionLabel_ = nullptr;
-    QLabel* summaryLabel_ = nullptr;
     std::array<QLabel*, 5> metricLabels_{};
     QProgressBar* progressBar_ = nullptr;
     QPushButton* cancelButton_ = nullptr;

@@ -19,3 +19,7 @@ target_link_libraries(rawviewer_presentation
         Qt6::Concurrent
 )
 target_compile_features(rawviewer_presentation PUBLIC cxx_std_20)
+
+if(WIN32)
+    target_link_libraries(rawviewer_presentation PRIVATE dwmapi)
+endif()

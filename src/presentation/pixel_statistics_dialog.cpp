@@ -16,6 +16,7 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QSignalBlocker>
+#include <QShowEvent>
 #include <QSpinBox>
 #include <QStackedWidget>
 #include <QTimer>
@@ -24,6 +25,10 @@
 
 #include <algorithm>
 #include <array>
+
+#ifdef Q_OS_WIN
+#include <dwmapi.h>
+#endif
 
 namespace rawviewer::presentation {
 namespace {
@@ -70,26 +75,26 @@ PixelStatisticsDialog::PixelStatisticsDialog(QWidget* parent)
     setObjectName(QStringLiteral("pixelStatisticsDialog"));
     setStyleSheet(QStringLiteral(
         "#pixelStatisticsDialog QFrame[statsPane=\"true\"] {"
-        " border: 1px solid palette(mid); background: palette(base); }"
-        "#pixelStatisticsDialog QLabel[role=\"section\"] {"
-        " color: palette(mid); font-size: 10px; font-weight: 700;"
-        " letter-spacing: 1px; }"
+        " border: 1px solid palette(mid); border-radius: 0px;"
+        " background: palette(base); }"
         "#pixelStatisticsDialog QToolButton[modeButton=\"true\"] {"
         " border: 0; border-bottom: 2px solid transparent;"
-        " padding: 4px 9px; min-height: 22px; font-weight: 600; }"
+        " border-radius: 0px; padding: 1px 7px;"
+        " min-height: 18px; font-weight: 600; }"
         "#pixelStatisticsDialog QToolButton:checked {"
         " border-bottom-color: palette(highlight);"
         " background: palette(alternate-base); color: palette(text); }"
         "#pixelStatisticsDialog QFrame[metricCell=\"true\"] {"
         " border-left: 1px solid palette(mid); }"
         "#pixelStatisticsDialog QFrame[channelCard=\"true\"] {"
-        " border: 1px solid palette(mid); background: palette(base); }"
+        " border: 1px solid palette(mid); border-radius: 0px;"
+        " background: palette(base); }"
         "#pixelStatisticsDialog QLabel[role=\"channelTitle\"] {"
         " font-weight: 700; }"
         "#pixelStatisticsDialog QLabel[role=\"channelSummary\"] {"
         " color: palette(mid); font-size: 10px; }"
         "#pixelStatisticsDialog QLabel[role=\"metricCaption\"] {"
-        " color: palette(mid); font-size: 10px; }"
+        " color: palette(mid); font-size: 14px; }"
         "#pixelStatisticsDialog QLabel[role=\"metricValue\"] {"
         " font-family: monospace; font-size: 14px; font-weight: 600; }"));
 
@@ -100,12 +105,10 @@ PixelStatisticsDialog::PixelStatisticsDialog(QWidget* parent)
     auto* top = new QFrame(this);
     top->setObjectName(QStringLiteral("statisticsModePane"));
     top->setProperty("statsPane", true);
+    top->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     auto* topLayout = new QHBoxLayout(top);
-    topLayout->setContentsMargins(8, 4, 6, 4);
+    topLayout->setContentsMargins(6, 1, 4, 1);
     topLayout->setSpacing(2);
-    auto* modeTitle = new QLabel(tr("MODE"), top);
-    modeTitle->setProperty("role", "section");
-    topLayout->addWidget(modeTitle);
     modeGroup_ = new QButtonGroup(this);
     modeGroup_->setExclusive(true);
     const std::array modes{
@@ -132,27 +135,25 @@ PixelStatisticsDialog::PixelStatisticsDialog(QWidget* parent)
     close->setAutoRaise(true);
     close->setFixedSize(22, 22);
     topLayout->addWidget(close);
-    root->addWidget(top, 1);
+    root->addWidget(top);
 
     auto* controls = new QFrame(this);
     controls->setObjectName(QStringLiteral("statisticsAnalysisPane"));
     controls->setProperty("statsPane", true);
+    controls->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     auto* controlLayout = new QGridLayout(controls);
-    controlLayout->setContentsMargins(8, 6, 8, 6);
+    controlLayout->setContentsMargins(6, 3, 6, 3);
     controlLayout->setHorizontalSpacing(7);
-    controlLayout->setVerticalSpacing(4);
-    auto* analysisTitle = new QLabel(tr("ANALYSIS"), controls);
-    analysisTitle->setProperty("role", "section");
-    controlLayout->addWidget(analysisTitle, 0, 0, 1, 8);
+    controlLayout->setVerticalSpacing(2);
 
     channelsCheck_ = new QCheckBox(tr("Bayer channels"), controls);
     channelsCheck_->setObjectName(QStringLiteral("statisticsChannelsCheck"));
     channelsCheck_->setToolTip(
         tr("Show separate R, Gr, Gb and B results"));
-    controlLayout->addWidget(channelsCheck_, 1, 0, 1, 2);
+    controlLayout->addWidget(channelsCheck_, 0, 0, 1, 2);
     selectionLabel_ = new QLabel(tr("Selection —"), controls);
     selectionLabel_->setObjectName(QStringLiteral("statisticsSelectionLabel"));
-    controlLayout->addWidget(selectionLabel_, 1, 2, 1, 6);
+    controlLayout->addWidget(selectionLabel_, 0, 2, 1, 6);
 
     auto* metrics = new QFrame(controls);
     metrics->setObjectName(QStringLiteral("statisticsMetrics"));
@@ -165,7 +166,7 @@ PixelStatisticsDialog::PixelStatisticsDialog(QWidget* parent)
         auto* cell = new QFrame(metrics);
         cell->setProperty("metricCell", index != 0);
         auto* cellLayout = new QVBoxLayout(cell);
-        cellLayout->setContentsMargins(8, 2, 8, 3);
+        cellLayout->setContentsMargins(7, 1, 7, 2);
         cellLayout->setSpacing(0);
         auto* caption = new QLabel(metricNames[index], cell);
         caption->setProperty("role", "metricCaption");
@@ -175,21 +176,18 @@ PixelStatisticsDialog::PixelStatisticsDialog(QWidget* parent)
         cellLayout->addWidget(metricLabels_[index]);
         metricsLayout->addWidget(cell, 1);
     }
-    controlLayout->addWidget(metrics, 2, 0, 1, 8);
+    controlLayout->addWidget(metrics, 1, 0, 1, 8);
 
-    summaryLabel_ = new QLabel(tr("Drag on the displayed RAW"), controls);
-    summaryLabel_->setObjectName(QStringLiteral("statisticsStateLabel"));
-    summaryLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    controlLayout->addWidget(summaryLabel_, 3, 0, 1, 8);
     progressBar_ = new QProgressBar(controls);
+    progressBar_->setObjectName(QStringLiteral("statisticsProgressBar"));
     progressBar_->setRange(0, 1000);
     progressBar_->setValue(0);
     progressBar_->setFormat(tr("Ready"));
     cancelButton_ = new QPushButton(tr("Cancel"), controls);
     cancelButton_->setEnabled(false);
-    controlLayout->addWidget(progressBar_, 4, 0, 1, 7);
-    controlLayout->addWidget(cancelButton_, 4, 7);
-    root->addWidget(controls, 2);
+    controlLayout->addWidget(progressBar_, 2, 0, 1, 7);
+    controlLayout->addWidget(cancelButton_, 2, 7);
+    root->addWidget(controls);
 
     auto* bottom = new QFrame(this);
     bottom->setObjectName(QStringLiteral("statisticsPlotPane"));
@@ -197,15 +195,13 @@ PixelStatisticsDialog::PixelStatisticsDialog(QWidget* parent)
     auto* bottomLayout = new QVBoxLayout(bottom);
     bottomLayout->setContentsMargins(8, 6, 8, 8);
     bottomLayout->setSpacing(3);
-    auto* plotTitle = new QLabel(tr("PLOT"), bottom);
-    plotTitle->setProperty("role", "section");
-    bottomLayout->addWidget(plotTitle);
     resultStack_ = new QStackedWidget(bottom);
     resultStack_->setObjectName(QStringLiteral("statisticsResultStack"));
     singleResultPage_ = new QWidget(resultStack_);
     auto* singleLayout = new QVBoxLayout(singleResultPage_);
     singleLayout->setContentsMargins(0, 0, 0, 0);
     chart_ = new StatisticsChartWidget(singleResultPage_);
+    chart_->setObjectName(QStringLiteral("statisticsChart"));
     singleLayout->addWidget(chart_);
     resultStack_->addWidget(singleResultPage_);
 
@@ -240,7 +236,7 @@ PixelStatisticsDialog::PixelStatisticsDialog(QWidget* parent)
     }
     resultStack_->addWidget(channelResultPage_);
     bottomLayout->addWidget(resultStack_);
-    root->addWidget(bottom, 5);
+    root->addWidget(bottom, 1);
 
     loadPreferences();
     applyChartPreferences();
@@ -377,7 +373,6 @@ void PixelStatisticsDialog::setBusy(
         progressBar_->setValue(0);
         progressBar_->setFormat(tr("Calculating %p%"));
         progressTimer_->start();
-        summaryLabel_->setText(tr("Calculating displayed RAW…"));
     } else {
         progressTimer_->stop();
         progress_.reset();
@@ -398,7 +393,6 @@ void PixelStatisticsDialog::setResults(
     setBusy(false);
     if (results.size() == channelCharts_.size()) {
         setMetricLabels(nullptr);
-        summaryLabel_->setText(tr("Complete · 4 Bayer channels"));
         for (std::size_t index = 0; index < channelCharts_.size(); ++index) {
             if (results[index].succeeded()) {
                 channelSummaryLabels_[index]->setText(
@@ -414,7 +408,6 @@ void PixelStatisticsDialog::setResults(
         resultStack_->setCurrentWidget(channelResultPage_);
     } else {
         setMetricLabels(&results.front().summary);
-        summaryLabel_->setText(tr("Complete"));
         chart_->setResult(results.front());
         resultStack_->setCurrentWidget(singleResultPage_);
     }
@@ -425,8 +418,6 @@ void PixelStatisticsDialog::setResults(
 void PixelStatisticsDialog::clearResult(const QString& message) {
     setBusy(false);
     setMetricLabels(nullptr);
-    summaryLabel_->setText(
-        message.isEmpty() ? tr("Drag on the displayed RAW") : message);
     progressBar_->setValue(0);
     progressBar_->setFormat(tr("Ready"));
     chart_->clear(message);
@@ -505,6 +496,22 @@ void PixelStatisticsDialog::setMetricLabels(
 void PixelStatisticsDialog::closeEvent(QCloseEvent* event) {
     emit toolClosed();
     QDialog::closeEvent(event);
+}
+
+void PixelStatisticsDialog::showEvent(QShowEvent* event) {
+    QDialog::showEvent(event);
+#ifdef Q_OS_WIN
+    // Attribute 33 is DWMWA_WINDOW_CORNER_PREFERENCE. Keep the numeric value
+    // so the Windows 10 SDK baseline can still compile; unsupported Windows
+    // versions simply ignore the call. Preference 1 is DWMWCP_DONOTROUND.
+    constexpr auto cornerPreferenceAttribute =
+        static_cast<DWMWINDOWATTRIBUTE>(33);
+    constexpr DWORD doNotRound = 1;
+    DwmSetWindowAttribute(reinterpret_cast<HWND>(winId()),
+                          cornerPreferenceAttribute,
+                          &doNotRound,
+                          sizeof(doNotRound));
+#endif
 }
 
 void PixelStatisticsDialog::reject() {

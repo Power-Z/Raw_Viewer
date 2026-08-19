@@ -170,6 +170,11 @@ MainWindow::MainWindow(
     connect(displayRenderTimer_, &QTimer::timeout, this, [this] {
         renderCurrentDisplay();
     });
+    displayControlApplyTimer_ = new QTimer(this);
+    displayControlApplyTimer_->setSingleShot(true);
+    displayControlApplyTimer_->setInterval(120);
+    connect(displayControlApplyTimer_, &QTimer::timeout,
+            this, &MainWindow::applyDisplayControls);
 
     QSettings settings;
     setTheme(settings.value("appearance/theme", "Dark").toString());
@@ -193,6 +198,12 @@ MainWindow::~MainWindow() {
     }
     if (demosaicCancellation_) {
         demosaicCancellation_->store(true);
+    }
+    if (imageTransformCancellation_) {
+        imageTransformCancellation_->store(true);
+    }
+    if (globalHistogramCancellation_) {
+        globalHistogramCancellation_->store(true);
     }
 }
 
@@ -220,26 +231,58 @@ void MainWindow::createMenus() {
     auto* editMenu = menuBar()->addMenu(tr("编辑(&E)"));
     undoAction_ = editMenu->addAction(tr("撤销"));
     redoAction_ = editMenu->addAction(tr("重做"));
+    undoAction_->setObjectName(QStringLiteral("undoAction"));
+    redoAction_->setObjectName(QStringLiteral("redoAction"));
     undoAction_->setShortcut(QKeySequence::Undo);
     redoAction_->setShortcut(QKeySequence::Redo);
     undoAction_->setEnabled(false);
     redoAction_->setEnabled(false);
     connect(undoAction_, &QAction::triggered, this, [this] {
-        if (documentSession_ && documentSession_->undo()) {
-            displayRenderTimer_->stop();
-            syncDisplayControls();
-            renderCurrentDisplay();
-            updateUndoActions();
-        }
+        applyHistoryStep(false);
     });
     connect(redoAction_, &QAction::triggered, this, [this] {
-        if (documentSession_ && documentSession_->redo()) {
-            displayRenderTimer_->stop();
-            syncDisplayControls();
-            renderCurrentDisplay();
-            updateUndoActions();
-        }
+        applyHistoryStep(true);
     });
+    editMenu->addSeparator();
+    struct TransformActionDefinition {
+        QString text;
+        QString objectName;
+        QKeySequence shortcut;
+        application::ImageTransform transform;
+    };
+    const std::array definitions{
+        TransformActionDefinition{tr("Flip（上下翻转）"),
+            QStringLiteral("flipVerticalAction"),
+            QKeySequence(QStringLiteral("Ctrl+Alt+V")),
+            application::ImageTransform::FlipVertical},
+        TransformActionDefinition{tr("Mirror（左右翻转）"),
+            QStringLiteral("mirrorHorizontalAction"),
+            QKeySequence(QStringLiteral("Ctrl+Alt+H")),
+            application::ImageTransform::MirrorHorizontal},
+        TransformActionDefinition{tr("Rotate Left（向左旋转 90°）"),
+            QStringLiteral("rotateLeftAction"),
+            QKeySequence(QStringLiteral("Ctrl+Alt+Left")),
+            application::ImageTransform::RotateLeft},
+        TransformActionDefinition{tr("Rotate Right（向右旋转 90°）"),
+            QStringLiteral("rotateRightAction"),
+            QKeySequence(QStringLiteral("Ctrl+Alt+Right")),
+            application::ImageTransform::RotateRight},
+        TransformActionDefinition{tr("Rotate 180（旋转 180°）"),
+            QStringLiteral("rotate180Action"),
+            QKeySequence(QStringLiteral("Ctrl+Alt+Down")),
+            application::ImageTransform::Rotate180}};
+    for (std::size_t index = 0; index < definitions.size(); ++index) {
+        const auto& definition = definitions[index];
+        auto* action = editMenu->addAction(definition.text);
+        action->setObjectName(definition.objectName);
+        action->setShortcut(definition.shortcut);
+        action->setEnabled(false);
+        transformActions_[index] = action;
+        connect(action, &QAction::triggered, this,
+                [this, transform = definition.transform] {
+            beginImageTransform(transform);
+        });
+    }
 
     auto* preferences = menuBar()->addMenu(tr("偏好(&P)"));
     auto* themes = preferences->addMenu(tr("主题"));
@@ -291,7 +334,7 @@ void MainWindow::createMenus() {
         QMessageBox::about(
             this,
             tr("关于 Raw Viewer"),
-            tr("<b>Raw Viewer 0.3.0-preview.3</b><br>"
+            tr("<b>Raw Viewer 0.3.0-preview.4</b><br>"
                "第二阶段：非破坏显示处理、Pixel Info、Bayer Extract、"
                "Pixel Statistics、Filter 与 Bayer Demosaic。<br>"
                "输入文件和原始像素始终保持只读。"));
@@ -304,6 +347,8 @@ void MainWindow::createStatusBar() {
     imageLabel_ = new QLabel(tr("未打开图像"), this);
     zoomLabel_ = new QLabel(tr("缩放 —"), this);
     taskLabel_ = new QLabel(tr("就绪"), this);
+    imageLabel_->setObjectName(QStringLiteral("imageStatusLabel"));
+    taskLabel_->setObjectName(QStringLiteral("taskStatusLabel"));
     statusBar()->addWidget(coordinateLabel_);
     statusBar()->addPermanentWidget(imageLabel_, 1);
     statusBar()->addPermanentWidget(zoomLabel_);
@@ -430,24 +475,53 @@ QWidget* MainWindow::createRightPanel() {
     auto* layout = new QVBoxLayout(panel);
     auto* histogramGroup = new QGroupBox(tr("全图统计 / 直方图"), panel);
     auto* histogramLayout = new QVBoxLayout(histogramGroup);
+    auto* histogramTools = new QHBoxLayout();
+    auto* histogramHint = new QLabel(
+        tr("全分辨率 · 自动通道模式"), histogramGroup);
+    histogramHint->setObjectName(QStringLiteral("globalHistogramHint"));
+    histogramZoomButton_ = new QToolButton(histogramGroup);
+    histogramZoomButton_->setObjectName(
+        QStringLiteral("histogramWindowZoomButton"));
+    histogramZoomButton_->setText(tr("🔍 BLV–WLV"));
+    histogramZoomButton_->setToolTip(
+        tr("以当前 BLV/WLV 为横轴区间放大；再次点击返回全范围"));
+    histogramZoomButton_->setCheckable(true);
+    histogramZoomButton_->setEnabled(false);
+    histogramTools->addWidget(histogramHint);
+    histogramTools->addStretch();
+    histogramTools->addWidget(histogramZoomButton_);
+    histogramLayout->addLayout(histogramTools);
     histogram_ = new HistogramWidget(histogramGroup);
     histogramLayout->addWidget(histogram_);
-    histogramLayout->addWidget(new QLabel(tr("当前显示预览的灰度分布"), histogramGroup));
+    connect(histogramZoomButton_, &QToolButton::toggled,
+            histogram_, &HistogramWidget::setZoomed);
+    connect(histogram_, &HistogramWidget::windowEditStarted,
+            this, [this] {
+        if (documentSession_) documentSession_->beginDisplayEdit();
+    });
+    connect(histogram_, &HistogramWidget::displayWindowChanged,
+            this, &MainWindow::previewHistogramWindow);
+    connect(histogram_, &HistogramWidget::windowEditFinished,
+            this, &MainWindow::commitHistogramWindow);
     layout->addWidget(histogramGroup);
 
     auto* displayGroup = new QGroupBox(tr("显示控制"), panel);
     auto* displayLayout = new QFormLayout(displayGroup);
     auto makeDisplaySpin = [displayGroup] {
         auto* spin = new QDoubleSpinBox(displayGroup);
-        spin->setDecimals(4);
+        spin->setDecimals(1);
         spin->setRange(-1.0e12, 1.0e12);
-        spin->setKeyboardTracking(true);
+        spin->setKeyboardTracking(false);
         spin->setEnabled(false);
         return spin;
     };
     blackPointSpin_ = makeDisplaySpin();
     whitePointSpin_ = makeDisplaySpin();
     gammaSpin_ = makeDisplaySpin();
+    blackPointSpin_->setObjectName(QStringLiteral("displayBlackPointSpin"));
+    whitePointSpin_->setObjectName(QStringLiteral("displayWhitePointSpin"));
+    gammaSpin_->setObjectName(QStringLiteral("displayGammaSpin"));
+    gammaSpin_->setDecimals(2);
     gammaSpin_->setRange(0.01, 10.0);
     gammaSpin_->setSingleStep(0.05);
     displayLayout->addRow(tr("Display BLV"), blackPointSpin_);
@@ -457,20 +531,37 @@ QWidget* MainWindow::createRightPanel() {
         new QPushButton(tr("恢复图像默认值"), displayGroup);
     resetDisplayButton_->setEnabled(false);
     displayLayout->addRow(resetDisplayButton_);
-    for (auto* spin : {blackPointSpin_, whitePointSpin_, gammaSpin_}) {
+    for (auto* spin : {blackPointSpin_, whitePointSpin_}) {
         connect(spin,
                 qOverload<double>(&QDoubleSpinBox::valueChanged),
                 this,
-                [this] { applyDisplayControls(); });
+                [this] {
+            histogram_->setDisplayWindow(
+                blackPointSpin_->value(), whitePointSpin_->value());
+            displayControlApplyTimer_->start();
+        });
         connect(spin,
                 &QDoubleSpinBox::editingFinished,
-                this,
-                &MainWindow::commitDisplayEdit);
+                this, [this] {
+            displayControlApplyTimer_->stop();
+            applyDisplayControls();
+            commitDisplayEdit();
+        });
     }
+    connect(gammaSpin_,
+            qOverload<double>(&QDoubleSpinBox::valueChanged),
+            this, [this] { displayControlApplyTimer_->start(); });
+    connect(gammaSpin_, &QDoubleSpinBox::editingFinished,
+            this, [this] {
+        displayControlApplyTimer_->stop();
+        applyDisplayControls();
+        commitDisplayEdit();
+    });
     connect(resetDisplayButton_, &QPushButton::clicked, this, [this] {
         if (!documentSession_) {
             return;
         }
+        displayControlApplyTimer_->stop();
         documentSession_->beginDisplayEdit();
         const auto result = documentSession_->updateDisplayMapping(
             documentSession_->initialDisplayMapping());
@@ -659,6 +750,7 @@ void MainWindow::beginOpen(const QString& path) {
     cancelPixelStatistics();
     cancelFilter();
     cancelDemosaic();
+    cancelImageTransform();
     statisticsSelection_.reset();
     viewport_->setStatisticsSelectionTool(StatisticsSelectionTool::None);
     ++bayerGeneration_;
@@ -715,27 +807,16 @@ void MainWindow::beginOpen(const QString& path) {
 
 void MainWindow::showDecoded(
     std::shared_ptr<const application::DecodedImage> image) {
-    // A filter can be launched from the previous document while a new open is
-    // still decoding. Invalidate it again at the document hand-off so that its
-    // late result can never replace the newly decoded display source.
-    cancelFilter();
-    cancelDemosaic();
+    // An edit can be launched from the previous document while a new open is
+    // still decoding. Invalidate every old-document task again at hand-off so
+    // that a late result can never replace the newly decoded display source.
+    cancelPipelineTasks();
     documentSession_ =
         std::make_unique<application::DocumentSession>(std::move(image));
-    bayerExtraction_.reset();
-    preDemosaicSource_.reset();
-    displaySource_ = documentSession_->original();
     bayerExtractDialog_->setResult(nullptr);
-    bayerExtractDialog_->setSource(&displaySource_->metadata);
-    pixelStatisticsDialog_->setSource(&displaySource_->metadata);
-    filterDialog_->setSource(&displaySource_->metadata);
-    demosaicDialog_->setSource(&displaySource_->metadata);
     pendingCoordinateInside_ = false;
     coordinateLabel_->setText(tr("坐标 —"));
-    syncDisplayControls();
-    renderCurrentDisplay(false);
-    updateUndoActions();
-    syncToolAvailability();
+    refreshFromDocumentState(false);
     imageLabel_->setText(metadataSummary(currentImage_->metadata));
     setWindowTitle(QStringLiteral("%1 — Raw Viewer")
                        .arg(QString::fromStdString(currentImage_->metadata.camera)
@@ -749,6 +830,7 @@ void MainWindow::applyDisplayControls() {
     if (!documentSession_) {
         return;
     }
+    const auto previous = documentSession_->displayMapping();
     domain::DisplayMapping mapping;
     mapping.blackPoint = blackPointSpin_->value();
     mapping.whitePoint = whitePointSpin_->value();
@@ -758,11 +840,42 @@ void MainWindow::applyDisplayControls() {
         taskLabel_->setText(QString::fromStdString(result.message));
         return;
     }
+    if (mapping != previous) {
+        // Demosaic materializes RGB bytes using the mapping captured at task
+        // start. Never allow that stale result to replace the newer mapping.
+        cancelDemosaic();
+    }
+    histogram_->setDisplayWindow(mapping.blackPoint, mapping.whitePoint);
+    {
+        const QSignalBlocker blockBlack(blackPointSpin_);
+        const QSignalBlocker blockWhite(whitePointSpin_);
+        blackPointSpin_->setMaximum(mapping.whitePoint - 0.1);
+        whitePointSpin_->setMinimum(mapping.blackPoint + 0.1);
+    }
     taskLabel_->setText(tr("显示 revision %1")
                             .arg(documentSession_->revision()));
+    updateUndoActions();
     if (!displayRenderTimer_->isActive()) {
         displayRenderTimer_->start();
     }
+}
+
+void MainWindow::previewHistogramWindow(double blackPoint,
+                                        double whitePoint) {
+    if (!documentSession_) return;
+    {
+        const QSignalBlocker blockBlack(blackPointSpin_);
+        const QSignalBlocker blockWhite(whitePointSpin_);
+        blackPointSpin_->setValue(blackPoint);
+        whitePointSpin_->setValue(whitePoint);
+    }
+}
+
+void MainWindow::commitHistogramWindow() {
+    if (!documentSession_) return;
+    displayControlApplyTimer_->stop();
+    applyDisplayControls();
+    commitDisplayEdit();
 }
 
 void MainWindow::commitDisplayEdit() {
@@ -782,16 +895,27 @@ void MainWindow::syncDisplayControls() {
     const QSignalBlocker blockWhite(whitePointSpin_);
     const QSignalBlocker blockGamma(gammaSpin_);
     const auto& mapping = documentSession_->displayMapping();
+    const auto range = application::globalHistogramRange(
+        displaySource_ ? displaySource_->metadata
+                       : documentSession_->original()->metadata);
+    const double singleStep = std::max(
+        0.1, (range.second - range.first) / 1000.0);
+    blackPointSpin_->setRange(range.first, range.second);
+    whitePointSpin_->setRange(range.first, range.second);
+    blackPointSpin_->setSingleStep(singleStep);
+    whitePointSpin_->setSingleStep(singleStep);
     blackPointSpin_->setValue(mapping.blackPoint);
     whitePointSpin_->setValue(mapping.whitePoint);
+    blackPointSpin_->setMaximum(mapping.whitePoint - 0.1);
+    whitePointSpin_->setMinimum(mapping.blackPoint + 0.1);
     gammaSpin_->setValue(mapping.gamma);
     const bool controlsUnavailable =
-        documentSession_->original()->preview.hasGrayscale16() ||
-        (displaySource_ && displaySource_->displayReadyRgb);
+        displaySource_ && displaySource_->displayReadyRgb;
     blackPointSpin_->setEnabled(!controlsUnavailable);
     whitePointSpin_->setEnabled(!controlsUnavailable);
     gammaSpin_->setEnabled(!controlsUnavailable);
     resetDisplayButton_->setEnabled(!controlsUnavailable);
+    histogram_->setDisplayWindow(mapping.blackPoint, mapping.whitePoint);
 }
 
 void MainWindow::renderCurrentDisplay(bool preserveView) {
@@ -809,14 +933,103 @@ void MainWindow::renderCurrentDisplay(bool preserveView) {
     }
     viewport_->setDisplayMapping(documentSession_->displayMapping());
     viewport_->setImage(currentImage_, preserveView);
-    histogram_->setImage(currentImage_);
     imageLabel_->setText(metadataSummary(source->metadata));
+}
+
+void MainWindow::refreshFromDocumentState(bool preserveView,
+                                          bool refreshStatistics) {
+    if (!documentSession_) {
+        return;
+    }
+    displayControlApplyTimer_->stop();
+    displaySource_ = documentSession_->displaySource();
+    preDemosaicSource_ = documentSession_->preDemosaicSource();
+    bayerExtraction_ = documentSession_->bayerExtraction();
+    beginGlobalHistogram();
+    const bool statisticsCanRefresh = refreshStatistics && preserveView &&
+        statisticsSelection_ && pixelStatisticsDialog_->isVisible() &&
+        displaySource_ &&
+        displaySource_->metadata.kind != application::ImageKind::Standard &&
+        statisticsSelection_->x1 < displaySource_->metadata.width &&
+        statisticsSelection_->y1 < displaySource_->metadata.height;
+
+    pendingCoordinateInside_ = false;
+    coordinateTimer_->stop();
+    coordinateLabel_->setText(tr("坐标 —"));
+    bayerExtractDialog_->setSource(&documentSession_->original()->metadata);
+    bayerExtractDialog_->setResult(bayerExtraction_.get());
+    pixelStatisticsDialog_->setSource(&displaySource_->metadata);
+    filterDialog_->setSource(&displaySource_->metadata);
+    demosaicDialog_->setSource(&displaySource_->metadata);
+    if (preDemosaicSource_) {
+        demosaicDialog_->setResult(&displaySource_->metadata);
+    }
+    if (!preserveView || !statisticsCanRefresh) {
+        statisticsSelection_.reset();
+        viewport_->clearStatisticsSelection();
+    }
+    syncDisplayControls();
+    syncToolAvailability();
+    renderCurrentDisplay(preserveView);
+    updateUndoActions();
+    if (statisticsCanRefresh) {
+        const auto selection = *statisticsSelection_;
+        QTimer::singleShot(0, this, [this, selection] {
+            if (statisticsSelection_ && *statisticsSelection_ == selection) {
+                beginPixelStatistics(selection);
+            }
+        });
+    }
+}
+
+void MainWindow::applyHistoryStep(bool redo) {
+    if (!documentSession_) {
+        return;
+    }
+    if (displayControlApplyTimer_->isActive()) {
+        displayControlApplyTimer_->stop();
+        applyDisplayControls();
+    }
+    displayRenderTimer_->stop();
+    const auto before = documentSession_->displaySource();
+    cancelPipelineTasks();
+    const bool changed = redo
+        ? documentSession_->redo() : documentSession_->undo();
+    if (!changed) {
+        updateUndoActions();
+        return;
+    }
+    const auto after = documentSession_->displaySource();
+    const bool sameGeometry = before && after &&
+        before->metadata.width == after->metadata.width &&
+        before->metadata.height == after->metadata.height;
+    refreshFromDocumentState(sameGeometry, true);
+    taskLabel_->setText(redo ? tr("已重做编辑") : tr("已撤销编辑"));
+}
+
+void MainWindow::cancelPipelineTasks() {
+    cancelPixelStatistics();
+    cancelFilter();
+    cancelDemosaic();
+    cancelImageTransform();
+    if (bayerCancellation_) {
+        bayerCancellation_->store(true, std::memory_order_relaxed);
+        bayerCancellation_.reset();
+    }
+    ++bayerGeneration_;
+    if (bayerExtractDialog_) {
+        bayerExtractDialog_->setBusy(false);
+    }
 }
 
 void MainWindow::updateUndoActions() {
     const bool hasDocument = static_cast<bool>(documentSession_);
     undoAction_->setEnabled(hasDocument && documentSession_->canUndo());
     redoAction_->setEnabled(hasDocument && documentSession_->canRedo());
+    for (auto* action : transformActions_) {
+        action->setEnabled(hasDocument && documentSession_->displaySource() &&
+                           documentSession_->displaySource()->pixels);
+    }
 }
 
 void MainWindow::syncToolAvailability() {
@@ -880,22 +1093,20 @@ void MainWindow::flushCoordinateUpdate() {
     }
     if (bayerExtraction_ &&
         displaySource_.get() == bayerExtraction_->image.get()) {
-        const auto source = bayerExtraction_->geometry.sourceCoordinate(
-            static_cast<std::uint64_t>(pendingCoordinateX_),
-            static_cast<std::uint64_t>(pendingCoordinateY_));
-        if (source) {
-            coordinateLabel_->setText(
-                tr("Extract %1 (%2, %3) → Source (%4, %5) | Raw %6 | Display %7")
-                    .arg(QString::fromStdString(
-                        bayerExtraction_->geometry.mask.name))
-                    .arg(pendingCoordinateX_)
-                    .arg(pendingCoordinateY_)
-                    .arg(source->x)
-                    .arg(source->y)
-                    .arg(info.originalValue, 0, 'g', 10)
-                    .arg(info.processedValue, 0, 'f', 4));
-            return;
-        }
+        const QString channel = info.channel == domain::BayerChannel::None
+            ? QString()
+            : tr(" | %1").arg(
+                QString::fromLatin1(domain::toString(info.channel)));
+        coordinateLabel_->setText(
+            tr("Extract %1 | 坐标 %2, %3 | Raw %4 | Display %5%6")
+                .arg(QString::fromStdString(
+                    bayerExtraction_->geometry.mask.name))
+                .arg(pendingCoordinateX_)
+                .arg(pendingCoordinateY_)
+                .arg(info.originalValue, 0, 'g', 10)
+                .arg(info.processedValue, 0, 'f', 4)
+                .arg(channel));
+        return;
     }
     if (displaySource_->metadata.kind == application::ImageKind::FlatRaw) {
         coordinateLabel_->setText(
@@ -938,6 +1149,8 @@ void MainWindow::openFilter() {
         source->metadata.kind == application::ImageKind::Standard) {
         return;
     }
+    documentSession_->commitDisplayEdit();
+    updateUndoActions();
     filterDialog_->setSource(&source->metadata);
     filterDialog_->show();
     filterDialog_->raise();
@@ -951,6 +1164,8 @@ void MainWindow::openDemosaic() {
         source->metadata.bayerPattern == domain::BayerPattern::None) {
         return;
     }
+    documentSession_->commitDisplayEdit();
+    updateUndoActions();
     demosaicDialog_->setSource(&source->metadata);
     demosaicDialog_->show();
     demosaicDialog_->raise();
@@ -1109,13 +1324,13 @@ void MainWindow::beginFilter() {
         source->metadata.kind == application::ImageKind::Standard) {
         return;
     }
-    cancelPixelStatistics();
+    documentSession_->commitDisplayEdit();
+    updateUndoActions();
+    cancelPipelineTasks();
     statisticsSelection_.reset();
     viewport_->clearStatisticsSelection();
     viewport_->setStatisticsSelectionTool(StatisticsSelectionTool::None);
     pixelStatisticsDialog_->hide();
-    cancelDemosaic();
-    cancelFilter();
     filterCancellation_ = std::make_shared<std::atomic_bool>(false);
     const auto token = filterCancellation_;
     const auto generation = ++filterGeneration_;
@@ -1142,16 +1357,10 @@ void MainWindow::beginFilter() {
             }
             return;
         }
-        displaySource_ = result.image;
-        pendingCoordinateInside_ = false;
-        coordinateLabel_->setText(tr("坐标 —"));
-        pixelStatisticsDialog_->setSource(&displaySource_->metadata);
-        filterDialog_->setSource(&displaySource_->metadata);
+        documentSession_->commitPipelineEdit(
+            result.image, {}, bayerExtraction_);
+        refreshFromDocumentState(true);
         filterDialog_->setResult(&displaySource_->metadata);
-        demosaicDialog_->setSource(&displaySource_->metadata);
-        syncDisplayControls();
-        syncToolAvailability();
-        renderCurrentDisplay(true);
         taskLabel_->setText(tr("滤波完成：%1")
             .arg(QString::fromStdString(displaySource_->metadata.format)));
     });
@@ -1179,13 +1388,13 @@ void MainWindow::beginDemosaic() {
         source->metadata.bayerPattern == domain::BayerPattern::None) {
         return;
     }
-    cancelPixelStatistics();
+    documentSession_->commitDisplayEdit();
+    updateUndoActions();
+    cancelPipelineTasks();
     statisticsSelection_.reset();
     viewport_->clearStatisticsSelection();
     viewport_->setStatisticsSelectionTool(StatisticsSelectionTool::None);
     pixelStatisticsDialog_->hide();
-    cancelFilter();
-    cancelDemosaic();
     demosaicCancellation_ = std::make_shared<std::atomic_bool>(false);
     const auto token = demosaicCancellation_;
     const auto generation = ++demosaicGeneration_;
@@ -1213,17 +1422,10 @@ void MainWindow::beginDemosaic() {
             }
             return;
         }
-        preDemosaicSource_ = source;
-        displaySource_ = result.image;
-        pendingCoordinateInside_ = false;
-        coordinateLabel_->setText(tr("坐标 —"));
-        pixelStatisticsDialog_->setSource(&displaySource_->metadata);
-        filterDialog_->setSource(&displaySource_->metadata);
-        demosaicDialog_->setSource(&displaySource_->metadata);
+        documentSession_->commitPipelineEdit(
+            result.image, source, bayerExtraction_);
+        refreshFromDocumentState(true);
         demosaicDialog_->setResult(&displaySource_->metadata);
-        syncDisplayControls();
-        syncToolAvailability();
-        renderCurrentDisplay(true);
         taskLabel_->setText(tr("Demosaic 完成：%1")
             .arg(QString::fromStdString(displaySource_->metadata.format)));
     });
@@ -1248,34 +1450,159 @@ void MainWindow::restoreDemosaicSource() {
     if (!documentSession_ || !preDemosaicSource_) {
         return;
     }
-    cancelDemosaic();
-    displaySource_ = preDemosaicSource_;
-    preDemosaicSource_.reset();
-    pixelStatisticsDialog_->setSource(&displaySource_->metadata);
-    filterDialog_->setSource(&displaySource_->metadata);
-    demosaicDialog_->setSource(&displaySource_->metadata);
-    pendingCoordinateInside_ = false;
-    coordinateLabel_->setText(tr("坐标 —"));
-    syncDisplayControls();
-    syncToolAvailability();
-    renderCurrentDisplay(true);
+    documentSession_->commitDisplayEdit();
+    updateUndoActions();
+    cancelPipelineTasks();
+    documentSession_->commitPipelineEdit(
+        preDemosaicSource_, {}, bayerExtraction_);
+    refreshFromDocumentState(true);
     taskLabel_->setText(tr("已恢复 Demosaic 输入 Bayer RAW"));
+}
+
+void MainWindow::beginImageTransform(application::ImageTransform transform) {
+    const auto source = displaySource_;
+    if (!documentSession_ || !source || !source->pixels) {
+        return;
+    }
+    documentSession_->commitDisplayEdit();
+    updateUndoActions();
+    cancelPipelineTasks();
+    statisticsSelection_.reset();
+    viewport_->clearStatisticsSelection();
+    viewport_->setStatisticsSelectionTool(StatisticsSelectionTool::None);
+    pixelStatisticsDialog_->hide();
+    imageTransformCancellation_ = std::make_shared<std::atomic_bool>(false);
+    const auto token = imageTransformCancellation_;
+    const auto generation = ++imageTransformGeneration_;
+    application::ImageTransformRequest request;
+    request.source = source;
+    request.transform = transform;
+    request.cancellation = token;
+    taskLabel_->setText(tr("正在执行 %1…")
+        .arg(QString::fromLatin1(application::toString(transform))));
+
+    auto* watcher =
+        new QFutureWatcher<application::ImageTransformResult>(this);
+    connect(watcher,
+            &QFutureWatcher<application::ImageTransformResult>::finished,
+            this,
+            [this, watcher, generation, token, source, transform] {
+        const auto result = watcher->result();
+        watcher->deleteLater();
+        if (generation != imageTransformGeneration_ ||
+            token != imageTransformCancellation_ || !documentSession_ ||
+            source != documentSession_->displaySource()) {
+            return;
+        }
+        imageTransformCancellation_.reset();
+        if (!result.succeeded()) {
+            taskLabel_->setText(result.errorCode == "task.cancelled"
+                ? tr("图像变换已取消") : tr("图像变换失败"));
+            if (result.errorCode != "task.cancelled") {
+                QMessageBox::warning(this, tr("Image Transform"),
+                    QString::fromStdString(result.message));
+            }
+            return;
+        }
+        const bool sameGeometry =
+            source->metadata.width == result.image->metadata.width &&
+            source->metadata.height == result.image->metadata.height;
+        documentSession_->commitPipelineEdit(
+            result.image, preDemosaicSource_, bayerExtraction_);
+        refreshFromDocumentState(sameGeometry);
+        taskLabel_->setText(tr("已完成 %1")
+            .arg(QString::fromLatin1(application::toString(transform))));
+    });
+    const auto service = imageTransformService_;
+    watcher->setFuture(QtConcurrent::run([service, request] {
+        return service.execute(request);
+    }));
+}
+
+void MainWindow::cancelImageTransform() {
+    if (imageTransformCancellation_) {
+        imageTransformCancellation_->store(true, std::memory_order_relaxed);
+        imageTransformCancellation_.reset();
+    }
+    ++imageTransformGeneration_;
+}
+
+void MainWindow::beginGlobalHistogram() {
+    const auto source = displaySource_;
+    if (!source || !source->pixels) {
+        cancelGlobalHistogram();
+        histogram_->setLoading(false);
+        histogramZoomButton_->setEnabled(false);
+        return;
+    }
+    if (globalHistogramSource_ == source) return;
+
+    cancelGlobalHistogram();
+    globalHistogramSource_ = source;
+    {
+        const QSignalBlocker blocker(histogramZoomButton_);
+        histogramZoomButton_->setChecked(false);
+    }
+    histogram_->setZoomed(false);
+    histogram_->setLoading(true);
+    histogramZoomButton_->setEnabled(false);
+    globalHistogramCancellation_ =
+        std::make_shared<std::atomic_bool>(false);
+    const auto token = globalHistogramCancellation_;
+    const auto generation = ++globalHistogramGeneration_;
+    application::GlobalHistogramRequest request;
+    request.source = source;
+    request.binCount = source->metadata.kind == application::ImageKind::Standard ||
+            source->displayReadyRgb
+        ? 256U : 65536U;
+    request.cancellation = token;
+
+    auto* watcher =
+        new QFutureWatcher<application::GlobalHistogramResult>(this);
+    connect(watcher,
+            &QFutureWatcher<application::GlobalHistogramResult>::finished,
+            this,
+            [this, watcher, generation, token, source] {
+        auto result = watcher->result();
+        watcher->deleteLater();
+        if (generation != globalHistogramGeneration_ ||
+            token != globalHistogramCancellation_ ||
+            source != displaySource_) {
+            return;
+        }
+        globalHistogramCancellation_.reset();
+        histogram_->setResult(std::move(result));
+        histogram_->setDisplayWindow(
+            documentSession_->displayMapping().blackPoint,
+            documentSession_->displayMapping().whitePoint);
+        histogramZoomButton_->setEnabled(
+            histogram_->seriesCount() != 0);
+    });
+    const auto service = globalHistogramService_;
+    watcher->setFuture(QtConcurrent::run([service, request] {
+        return service.execute(request);
+    }));
+}
+
+void MainWindow::cancelGlobalHistogram() {
+    if (globalHistogramCancellation_) {
+        globalHistogramCancellation_->store(true, std::memory_order_relaxed);
+        globalHistogramCancellation_.reset();
+    }
+    ++globalHistogramGeneration_;
+    globalHistogramSource_.reset();
 }
 
 void MainWindow::beginBayerExtraction() {
     if (!documentSession_) {
         return;
     }
-    cancelPixelStatistics();
-    cancelFilter();
-    cancelDemosaic();
-    preDemosaicSource_.reset();
+    documentSession_->commitDisplayEdit();
+    updateUndoActions();
+    cancelPipelineTasks();
     statisticsSelection_.reset();
     viewport_->setStatisticsSelectionTool(StatisticsSelectionTool::None);
     pixelStatisticsDialog_->hide();
-    if (bayerCancellation_) {
-        bayerCancellation_->store(true);
-    }
     if (exportCancellation_) {
         exportCancellation_->store(true);
         exportCancellation_.reset();
@@ -1311,17 +1638,9 @@ void MainWindow::beginBayerExtraction() {
             }
             return;
         }
-        bayerExtraction_ = result.extraction;
-        displaySource_ = bayerExtraction_->image;
-        pendingCoordinateInside_ = false;
-        coordinateLabel_->setText(tr("坐标 —"));
-        bayerExtractDialog_->setResult(bayerExtraction_.get());
-        pixelStatisticsDialog_->setSource(&displaySource_->metadata);
-        filterDialog_->setSource(&displaySource_->metadata);
-        demosaicDialog_->setSource(&displaySource_->metadata);
-        syncDisplayControls();
-        syncToolAvailability();
-        renderCurrentDisplay(false);
+        documentSession_->commitPipelineEdit(
+            result.extraction->image, {}, result.extraction);
+        refreshFromDocumentState(false);
         taskLabel_->setText(tr("已显示 %1 提取结果")
             .arg(QString::fromStdString(bayerExtraction_->geometry.mask.name)));
     });
@@ -1335,21 +1654,14 @@ void MainWindow::showOriginalImage() {
     if (!documentSession_) {
         return;
     }
-    cancelPixelStatistics();
-    cancelFilter();
-    cancelDemosaic();
-    preDemosaicSource_.reset();
+    documentSession_->commitDisplayEdit();
+    updateUndoActions();
+    cancelPipelineTasks();
     statisticsSelection_.reset();
     viewport_->clearStatisticsSelection();
-    displaySource_ = documentSession_->original();
-    pixelStatisticsDialog_->setSource(&displaySource_->metadata);
-    filterDialog_->setSource(&displaySource_->metadata);
-    demosaicDialog_->setSource(&displaySource_->metadata);
-    pendingCoordinateInside_ = false;
-    coordinateLabel_->setText(tr("坐标 —"));
-    renderCurrentDisplay(false);
-    syncDisplayControls();
-    syncToolAvailability();
+    documentSession_->commitPipelineEdit(
+        documentSession_->original(), {}, bayerExtraction_);
+    refreshFromDocumentState(false);
     taskLabel_->setText(tr("已显示原始 Bayer 图像"));
 }
 
