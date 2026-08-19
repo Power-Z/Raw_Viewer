@@ -1,7 +1,13 @@
 add_library(rawviewer_presentation STATIC
+    bayer_extract_dialog.cpp
+    demosaic_dialog.cpp
+    filter_dialog.cpp
     histogram_widget.cpp
     image_viewport.cpp
     main_window.cpp
+    pixel_info_dialog.cpp
+    pixel_statistics_dialog.cpp
+    statistics_chart_widget.cpp
     theme_manager.cpp
 )
 
@@ -13,3 +19,7 @@ target_link_libraries(rawviewer_presentation
         Qt6::Concurrent
 )
 target_compile_features(rawviewer_presentation PUBLIC cxx_std_20)
+
+if(WIN32)
+    target_link_libraries(rawviewer_presentation PRIVATE dwmapi)
+endif()

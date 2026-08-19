@@ -30,10 +30,12 @@ set_target_properties(rawviewer_libraw PROPERTIES
 )
 
 add_library(rawviewer_infrastructure STATIC
+    bayer_csv_exporter.cpp
     camera_raw_decoder.cpp
     flat_raw_decoder.cpp
     local_logger.cpp
     qt_image_decoder.cpp
+    qt_recent_document_store.cpp
 )
 
 target_include_directories(rawviewer_infrastructure PUBLIC ${PROJECT_SOURCE_DIR}/src)

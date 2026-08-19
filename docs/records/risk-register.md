@@ -7,7 +7,7 @@
 | R-001 | 200 MP 整图复制导致内存耗尽 | 5 | 4 | 不可变映射、瓦片、金字塔、有界缓存；峰值基准 | 工作集超过预算或 OOM | Open |
 | R-002 | 32-bit RAW 被错误解释为 UInt32/Float32 | 5 | 2 | UI 独立 scalarType；UInt32/Float32 黄金像素测试 | 同一字节得到完全不同数值 | Mitigated |
 | R-003 | stride/packed 格式未定义导致错行 | 5 | 3 | stride 高级项及测试；首版拒绝 packed；样本清单 | 文件长度正确但画面错位 | Mitigated |
-| R-004 | Bayer pattern 默认值导致通道分析错误 | 4 | 3 | 每文档显式 pattern；状态栏持续显示 | 通道标注与样本基准不符 | Open |
+| R-004 | Bayer pattern 默认值导致通道分析错误 | 4 | 2 | 每文档显式 pattern；状态栏持续显示；四种 2×2 pattern、通道坐标与奇数 ROI 黄金测试 | 通道标注或提取结果与样本基准不符 | Mitigated |
 | R-005 | 后台旧任务覆盖新文档 | 4 | 2 | generationId、取消、过期结果丢弃；后续补 UI 压力测试 | 快速切换文件出现旧图/旧统计 | Mitigated |
 | R-006 | Qt 许可选择不符合分发方式 | 5 | 2 | 依赖清单、动态链接策略、发布前法务确认 | 准备对外交付 | Open |
 | R-007 | GPU/远程桌面兼容性不足 | 3 | 3 | CPU 回退；适配器隔离；目标设备测试 | OpenGL 初始化失败 | Open |
@@ -20,6 +20,7 @@
 | R-014 | 当前大样本未达到 200 MP / 400 MB 目标 | 4 | 5 | 用户批准延期；当前样本只做约 100 MP 基准，V0.4 前补充正式样本 | V0.4 性能验收开始 | Accepted |
 | R-015 | LibRaw 构建误带 GPL demosaic packs | 5 | 2 | 固定主线构建选项、生成许可证清单、CI 检查依赖 | 制品依赖或符号检查发现扩展包 | Open |
 | R-016 | 相机 RAW 容器不支持随机瓦片读取 | 4 | 4 | 允许一份不可变解码 mosaic；显示/处理仍按瓦片且不复制整图 | LibRaw 必须完整解码后才能访问像素 | Open |
+| R-017 | 错解 LibRaw `black` 与 `cblack` 语义导致默认显示黑位错误 | 4 | 2 | 使用基础黑位加四通道偏移；真实相机样本固定 4093.5 回归断言 | 默认预览发灰或黑位接近零 | Mitigated |
 
 ## 复审记录
 
@@ -28,3 +29,7 @@
 | 2026-07-30 | Power-Z / Codex | 建立 V0.1 初始风险基线 |
 | 2026-07-31 | Power-Z / Codex | 确认统计方向；增加相机容器、样本容量和 LibRaw 许可风险 |
 | 2026-07-31 | Power-Z / Codex | V0.2 实现端序/stride/32-bit 测试与 generation 保护，降低 R-002/R-003/R-005 概率 |
+| 2026-07-31 | Power-Z / Codex | V0.3 引入文档 revision、不可变预览源和五步历史；增加 LibRaw 黑电平语义回归保护 |
+| 2026-07-31 | Power-Z / Codex | P2-03 覆盖四种 Bayer pattern，并用真实 RGGB 样本完成状态栏与 overlay 验收，降低 R-004 概率 |
+| 2026-08-01 | Power-Z / Codex | P2-04 以只读通道视图避免整幅副本，补齐坐标/奇数 ROI 测试并完成真实 RGGB R/B 通道窗口验收 |
+| 2026-08-18 | Power-Z / Codex | Preview 2 发布复审：R-006 继续保持 Open（正式法律复核未完成）；R-008 通过忽略规则、显式暂存和制品检查控制；未提交真实 RAW |

@@ -113,4 +113,89 @@ const char* toString(BayerPattern value) noexcept {
     return "Unknown";
 }
 
+const char* toString(BayerChannel value) noexcept {
+    switch (value) {
+    case BayerChannel::None: return "";
+    case BayerChannel::R: return "R";
+    case BayerChannel::Gr: return "Gr";
+    case BayerChannel::Gb: return "Gb";
+    case BayerChannel::B: return "B";
+    }
+    return "";
+}
+
+BayerChannel bayerChannelAt(BayerPattern pattern,
+                            std::uint64_t x,
+                            std::uint64_t y) noexcept {
+    const bool oddX = (x & 1U) != 0;
+    const bool oddY = (y & 1U) != 0;
+    switch (pattern) {
+    case BayerPattern::RGGB:
+        if (!oddY) return oddX ? BayerChannel::Gr : BayerChannel::R;
+        return oddX ? BayerChannel::B : BayerChannel::Gb;
+    case BayerPattern::BGGR:
+        if (!oddY) return oddX ? BayerChannel::Gb : BayerChannel::B;
+        return oddX ? BayerChannel::R : BayerChannel::Gr;
+    case BayerPattern::GRBG:
+        if (!oddY) return oddX ? BayerChannel::R : BayerChannel::Gr;
+        return oddX ? BayerChannel::Gb : BayerChannel::B;
+    case BayerPattern::GBRG:
+        if (!oddY) return oddX ? BayerChannel::B : BayerChannel::Gb;
+        return oddX ? BayerChannel::Gr : BayerChannel::R;
+    case BayerPattern::None:
+        return BayerChannel::None;
+    }
+    return BayerChannel::None;
+}
+
+std::optional<BayerCoordinate> bayerChannelOffset(
+    BayerPattern pattern,
+    BayerChannel channel) noexcept {
+    if (channel == BayerChannel::None) {
+        return std::nullopt;
+    }
+    for (std::uint64_t y = 0; y < 2; ++y) {
+        for (std::uint64_t x = 0; x < 2; ++x) {
+            if (bayerChannelAt(pattern, x, y) == channel) {
+                return BayerCoordinate{x, y};
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<BayerCoordinate> bayerChannelToSource(
+    BayerPattern pattern,
+    BayerChannel channel,
+    std::uint64_t channelX,
+    std::uint64_t channelY) noexcept {
+    const auto offset = bayerChannelOffset(pattern, channel);
+    if (!offset ||
+        channelX > (std::numeric_limits<std::uint64_t>::max() - offset->x) / 2 ||
+        channelY > (std::numeric_limits<std::uint64_t>::max() - offset->y) / 2) {
+        return std::nullopt;
+    }
+    return BayerCoordinate{
+        offset->x + channelX * 2,
+        offset->y + channelY * 2
+    };
+}
+
+std::optional<BayerCoordinate> sourceToBayerChannel(
+    BayerPattern pattern,
+    BayerChannel channel,
+    std::uint64_t sourceX,
+    std::uint64_t sourceY) noexcept {
+    const auto offset = bayerChannelOffset(pattern, channel);
+    if (!offset || sourceX < offset->x || sourceY < offset->y ||
+        ((sourceX - offset->x) & 1U) != 0 ||
+        ((sourceY - offset->y) & 1U) != 0) {
+        return std::nullopt;
+    }
+    return BayerCoordinate{
+        (sourceX - offset->x) / 2,
+        (sourceY - offset->y) / 2
+    };
+}
+
 } // namespace rawviewer::domain

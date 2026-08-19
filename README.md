@@ -4,15 +4,32 @@
 
 ## 当前阶段
 
-项目处于 **V0.2：工程骨架与基础浏览闭环** 阶段。当前分支已经提供首个可运行的 Windows x64 程序：
+项目处于 **V0.3：非破坏处理与基础分析** 阶段。V0.2 浏览闭环已合并，当前分支开始交付第二阶段能力：
 
 - C++20、Qt 6 Widgets、CMake Presets 和分层 target；
 - 20/60/20 三栏主窗口、文件树、拖放、状态栏和五种主题；
+- File / Recent Files 保存最近十个成功打开的文档及对应 RAW 参数；已删除文件会被标记且不会发起加载；
 - JPG、PNG、BMP 基础解码；
-- UInt8、UInt16、UInt32、Float32 平面 RAW，支持端序、header 和 row stride；
+- UInt8、UInt16、UInt32、Float32 平面 RAW，支持端序、skip bytes 和 row stride；
 - 主线 LibRaw 0.22.2 相机 RAW 容器解码；
-- 左键平移、鼠标锚点缩放、预览直方图和原始像素查询；
-- 后台打开、取消标志和 generation 防止旧结果覆盖。
+- 左键/中键平移、鼠标锚点缩放、跟随主题的顶部/左侧像素标尺、全图缩略导航、底部/右侧滚动条、预览直方图和原始像素查询；
+- 后台打开、视口加载动画、取消标志和 generation 防止旧结果覆盖。
+- UInt16 平面 RAW 使用完整 W×H Grayscale16 视图，按文件顺序逐像素显示，不生成缩小预览、不按 Bayer channel 进行 RGB 着色；
+- 原始信号与显示预览分离，调整显示参数不会修改原始图像；
+- Sensor BLV 与 Display BLV 分离，并提供 Display WLV、Gamma 和图像默认值复位；
+- 右上角使用后台全分辨率通道直方图：Bayer 为 R/Gr/Gb/B，RGB 为 R/G/B/Y，单通道 RAW 为灰度；BLV/WLV 以一位小数输入和共轴双手柄控制，拖动期间只预览、松手后一次应用，并支持 BLV–WLV 区间放大精调。完整 Grayscale16/RGBA 使用连续内存统计快速路径，RAW 默认 Gamma 为线性 1.0。
+- 每个文档独立的五步全局编辑撤销/重做，覆盖显示参数、Flip/Mirror/Rotate、Bayer Extract、Filter 和 Demosaic；撤回后同步刷新显示、直方图、坐标、工具状态和仍有效的统计结果。
+- 编辑菜单提供 Flip、Mirror、Rotate Left、Rotate Right、Rotate 180；几何变换采用惰性坐标映射和最长边 1024 的后台预览，不复制完整大图。
+- Pixel Info 同时查询 Raw、Display、RGB 与 Bayer 通道，并在可读缩放级别绘制有界标签和 Bayer mesh。
+- 像素值叠加层按图像类型自动显示 RAW 原始值或 RGB 三通道值；RGB 以较 RAW 标注小 40% 的 `R/G/B` 红、绿、蓝三行置于像素左下角。达到阈值后覆盖全部可见像素并在拖拽、缩放和连续换图中保持坐标同步。
+- Pixel Info 仅保留像素值、Bayer mesh、Bayer pattern：默认仅启用像素值；mesh 使用 R/Gr/Gb/B 四色遮罩，Pattern 字样显示在像素右下角；右侧 4×4 RGGB 示例实时预览三个选项的组合效果。
+- Bayer Extract 支持标准 Bayer 2×2、Quad Bayer 4×4、Hex Bayer 8×8 和自定义 n×m 特殊 pattern；每次固定从原始全图按位置周期采样并重组为只读灰度 RAW 视图，不复制整幅输入。
+- Bayer Extract 全选为严格恒等操作并零拷贝复用原图；非全选使用最长边 1024 的有界 signal preview，输出尺寸和状态栏均采用重排后的当前坐标，高倍率下通过有界精确像素层保证背景与像素标注一致。
+- Bayer Extract 使用紧凑的 Pattern/矩阵双区域界面；自定义参数仅在选择 `Custom` 时展开，支持 Row-major/Column-major 帮助说明、配置持久化及随 pattern 大小自动缩放的方形单元。
+- `Pixel Statistics` 支持 Status、Horizontal Box、Vertical Box、Line 四种原始 Bayer 统计模式，WB 入口预留；两次左键完成矩形/线段选择；后台计算 count/min/max/mean/std、直方图或一维 profile；支持 All/R/Gr/Gb/B 通道、进度和取消。紧凑直角窗口使用主题无关的黑色细线、固定灰色绘图区，并在鼠标靠近数据线时显示 X/Y 轴引导线。
+- 像素统计流式读取只读原始像素源，不复制整幅 RAW；图表数据有界降采样。统计口径和性能设计见 [V0.3 Pixel Statistics 方案](docs/plans/v0.3-pixel-statistics.md)。
+- `Filter` 对当前显示 RAW 执行 Mean、Gaussian 或 Median 3×3/5×5/7×7 滤波，可在提取或已有滤波结果上继续处理；最长边 1024 的预览和有界惰性瓦片避免复制整幅输出。性能设计见 [V0.7.7 Filter 方案](docs/plans/v0.7.7-filter-tool.md)。
+- `Demosaic` 对当前规则 Bayer RAW 提供 Bilinear、Malvar-He-Cutler 和 Hamilton-Adams Edge-Aware 三种 RGB 恢复方法；默认 MHC，可恢复处理前 Bayer 源进行算法比较。调研和性能设计见 [V0.7.8 Bayer Demosaic 方案](docs/plans/v0.7.8-bayer-demosaic.md)。
 
 ## Windows 开发环境
 
@@ -32,6 +49,14 @@ $env:RAWVIEWER_QT_ROOT = "C:\Qt\6.8.3\msvc2022_64"
 $env:RAWVIEWER_LIBRAW_ROOT = "C:\LibRaw\LibRaw-0.22.2"
 ```
 
+生成包含 Qt、VC Runtime、LibRaw 和第三方许可证的 Windows x64 便携包：
+
+```powershell
+.\scripts\package-windows.ps1 -Version v0.3.0-preview.4
+```
+
+输出位于 `artifacts/`，包含 ZIP 和 SHA-256 校验文件。
+
 配置、构建、测试和运行：
 
 ```powershell
@@ -50,11 +75,18 @@ $env:RAWVIEWER_LIBRAW_ROOT = "C:\LibRaw\LibRaw-0.22.2"
 验证本地受控相机样本：
 
 ```powershell
-$env:RAWVIEWER_CAMERA_SAMPLE = "E:\code\Raw_viewer\Data\Test_data\B0012535.raw"
+$env:RAWVIEWER_CAMERA_SAMPLE = "E:\code\Raw_viewer\Data\Test_data\B0012535.B0011072.3FR"
 .\scripts\dev.ps1 test
 ```
 
-`Data/` 中的 RAW 不会进入 Git。平面 `.raw/.bin` 使用左侧参数；TIFF/DNG/厂商相机容器按内容签名进入 LibRaw，不会按扩展名盲目平面解码。
+同时用 11776×8842、UInt16、小端、Skip bytes=0 验证本地平面 RAW：
+
+```powershell
+$env:RAWVIEWER_FLAT_SAMPLE = "E:\code\Raw_viewer\Data\Test_data\B0012535.B0011072.raw"
+.\scripts\dev.ps1 test
+```
+
+`Data/` 中的 RAW 不会进入 Git。平面 `.raw/.RAW/.bin/.BIN` 使用左侧参数，从 Skip bytes 后按行连续展开；UInt16 显示采用完整分辨率单通道 Grayscale16 和最近邻缩放，像素标签直接读取原始 UInt16。TIFF/DNG/厂商相机容器按内容签名进入 LibRaw，不会按扩展名盲目平面解码。
 
 ## 仓库结构
 
@@ -68,7 +100,9 @@ $env:RAWVIEWER_CAMERA_SAMPLE = "E:\code\Raw_viewer\Data\Test_data\B0012535.raw"
 │  ├─ plans/                分阶段实施方案
 │  ├─ process/              开发和维护流程
 │  ├─ records/              状态、追踪、风险、样本与发布记录
-│  └─ requirements/         业务与数据需求
+│  ├─ releases/             各版本发布说明
+│  ├─ requirements/         业务与数据需求
+│  └─ user-guide.md         Windows 用户操作指南
 ├─ require/                 原始版本需求
 ├─ scripts/                 本地开发入口
 ├─ src/
@@ -84,6 +118,8 @@ $env:RAWVIEWER_CAMERA_SAMPLE = "E:\code\Raw_viewer\Data\Test_data\B0012535.raw"
 
 ## 协作方式
 
+- 用户操作说明见 [`docs/user-guide.md`](docs/user-guide.md)。
+- 当前预发布说明见 [`docs/releases/v0.3.0-preview.4.md`](docs/releases/v0.3.0-preview.4.md)，便携包通过 [GitHub Releases](https://github.com/Power-Z/Raw_Viewer/releases) 分发。
 - 日常开发遵循 [`docs/process/github-workflow.md`](docs/process/github-workflow.md)。
 - 首次上线 GitHub 前完成 [`docs/process/project-preparation-checklist.md`](docs/process/project-preparation-checklist.md)。
 - 当前状态和待确认项见 [`docs/records/project-status.md`](docs/records/project-status.md)。

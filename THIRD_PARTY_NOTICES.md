@@ -23,3 +23,11 @@ fresh license review.
 - GPL demosaic packs are not enabled or linked.
 - Project: <https://www.libraw.org/>
 - Licensing: <https://www.libraw.org/about>
+
+## Microsoft Visual C++ Runtime
+
+- Components used: Visual C++ 2022 x64 app-local runtime DLLs.
+- Distribution: copied from the Visual Studio 2022 Redistributable directory.
+- Licensing: Microsoft Visual Studio licensing terms and the distributable-code
+  list apply.
+- Documentation: <https://learn.microsoft.com/cpp/windows/redistributing-visual-cpp-files>

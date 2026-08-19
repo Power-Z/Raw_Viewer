@@ -29,7 +29,14 @@ public:
             return {};
         }
         const QRgb pixel = image_.pixel(static_cast<int>(x), static_cast<int>(y));
-        return {true, static_cast<double>(qGray(pixel))};
+        return {
+            true,
+            static_cast<double>(qGray(pixel)),
+            true,
+            static_cast<std::uint8_t>(qRed(pixel)),
+            static_cast<std::uint8_t>(qGreen(pixel)),
+            static_cast<std::uint8_t>(qBlue(pixel))
+        };
     }
 
 private:
@@ -89,6 +96,8 @@ application::DecodeResult QtImageDecoder::decode(
     decoded->metadata.height = static_cast<std::uint64_t>(image.height());
     decoded->metadata.scalarType = domain::ScalarType::UInt8;
     decoded->metadata.format = reader.format().toUpper().toStdString();
+    decoded->metadata.sensorBlackLevel = 0.0;
+    decoded->metadata.whiteLevel = 255.0;
     decoded->pixels = std::make_shared<QtPixelSource>(image);
 
     const int maxSide = 2048;
